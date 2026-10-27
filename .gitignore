@@ -11,3 +11,4 @@ coverage/
 .turbo/
 .pio/
 .tokensave/
+loadtest/keys.json
