@@ -3,6 +3,8 @@ import type { Observation } from "@coredrive/protocol";
 
 export interface QueueItem {
   id: string;
+  /** Account that recorded the observation. Nobody else may upload it. */
+  username: string;
   sessionId: string;
   obs: Observation;
   attempts: number;
@@ -11,13 +13,19 @@ export interface QueueItem {
 
 const DB_NAME = "coredrive";
 const STORE = "observations";
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
 function db(): Promise<IDBPDatabase> {
-  dbPromise ??= openDB(DB_NAME, 1, {
-    upgrade(database) {
-      database.createObjectStore(STORE, { keyPath: "id" });
+  dbPromise ??= openDB(DB_NAME, DB_VERSION, {
+    upgrade(database, oldVersion, _newVersion, transaction) {
+      if (oldVersion < 1) database.createObjectStore(STORE, { keyPath: "id" });
+      if (oldVersion < 2) {
+        // Rows written before the queue carried an owner cannot be attributed to
+        // an account, so they can never be uploaded safely. Drop them.
+        void transaction.objectStore(STORE).clear().catch(() => undefined);
+      }
     },
   });
   return dbPromise;
@@ -27,11 +35,11 @@ export async function enqueue(item: QueueItem): Promise<void> {
   await (await db()).put(STORE, item);
 }
 
-export async function pending(limit = 100): Promise<QueueItem[]> {
+export async function pending(username: string, limit = 100): Promise<QueueItem[]> {
   const all = (await (await db()).getAll(STORE)) as QueueItem[];
   const now = Date.now();
   return all
-    .filter((item) => item.nextAttemptAt <= now)
+    .filter((item) => item.username === username && item.nextAttemptAt <= now)
     .sort((a, b) => a.sessionId.localeCompare(b.sessionId))
     .slice(0, limit);
 }
@@ -54,6 +62,7 @@ export async function retryLater(ids: string[], delayMs: number): Promise<void> 
   await tx.done;
 }
 
-export async function count(): Promise<number> {
-  return (await db()).count(STORE);
+export async function count(username: string): Promise<number> {
+  const all = (await (await db()).getAll(STORE)) as QueueItem[];
+  return all.filter((item) => item.username === username).length;
 }

@@ -52,6 +52,34 @@ describe("normaliseObservation", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects a direct observation that supplies a heard id", () => {
+    const result = normaliseObservation({ ...base, routeType: 2, heardId: "a1b2" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a trace observation that supplies a heard id", () => {
+    const result = normaliseObservation({ ...base, packetType: 9, heardId: "a1b2" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("derives no heard id for direct routes", () => {
+    const result = normaliseObservation({ ...base, routeType: 2 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.heardId).toBeNull();
+      expect(result.value.obs.heardId).toBeUndefined();
+    }
+  });
+
+  it("derives no heard id for trace packets", () => {
+    const result = normaliseObservation({ ...base, packetType: 9 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.heardId).toBeNull();
+      expect(result.value.obs.heardId).toBeUndefined();
+    }
+  });
+
   it("flags one-byte hashes as low resolution", () => {
     const result = normaliseObservation({
       ...base,
@@ -79,6 +107,34 @@ describe("dedupeKey", () => {
   it("changes with the user", () => {
     expect(dedupeKey("ben", base, base.lat, base.lon)).not.toBe(
       dedupeKey("other", base, base.lat, base.lon),
+    );
+  });
+
+  it("is stable when heardId is omitted versus uppercase after normalisation", () => {
+    const omitted = normaliseObservation({ ...base, heardId: undefined });
+    const uppercase = normaliseObservation({ ...base, heardId: "A1B2" });
+    expect(omitted.ok).toBe(true);
+    expect(uppercase.ok).toBe(true);
+    if (!omitted.ok || !uppercase.ok) return;
+
+    const fromOmitted = dedupeKey(
+      "ben",
+      omitted.value.obs,
+      omitted.value.obs.lat,
+      omitted.value.obs.lon,
+    );
+    const fromUppercase = dedupeKey(
+      "ben",
+      uppercase.value.obs,
+      uppercase.value.obs.lat,
+      uppercase.value.obs.lon,
+    );
+
+    expect(fromOmitted).toBe(fromUppercase);
+
+    // Hashing the unnormalised input is what used to split these into two keys.
+    expect(dedupeKey("ben", { ...base, heardId: "A1B2" }, base.lat, base.lon)).not.toBe(
+      fromOmitted,
     );
   });
 });

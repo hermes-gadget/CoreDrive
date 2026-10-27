@@ -12,7 +12,11 @@ const env = z
   })
   .parse(process.env);
 
+const RETENTION_INTERVAL_MS = 60 * 60 * 1000;
+
 const pool = new pg.Pool({ connectionString: env.DATABASE_URL, max: 5 });
+pool.on("error", (error) => console.error("publisher: idle database client error", error));
+
 const client = mqtt.connect(env.MQTT_URL, {
   username: env.MQTT_USERNAME,
   password: env.MQTT_PASSWORD,
@@ -34,7 +38,28 @@ function publish(topic: string, payload: string): Promise<void> {
   });
 }
 
+async function sweep(): Promise<void> {
+  const observations = await pool.query(
+    "DELETE FROM observations WHERE time < now() - interval '180 days'",
+  );
+  const outbox = await pool.query(
+    `DELETE FROM ingest_outbox
+      WHERE delivered_at IS NOT NULL
+        AND delivered_at < now() - interval '7 days'`,
+  );
+  const sessions = await pool.query(
+    "DELETE FROM auth_sessions WHERE expires_at < now() - interval '7 days'",
+  );
+  console.log(
+    "publisher: retention sweep removed observations=%d ingest_outbox=%d auth_sessions=%d",
+    observations.rowCount ?? 0,
+    outbox.rowCount ?? 0,
+    sessions.rowCount ?? 0,
+  );
+}
+
 let running = true;
+let lastSweep = Date.now();
 
 async function tick(): Promise<void> {
   const { rows } = await pool.query<{
@@ -45,7 +70,6 @@ async function tick(): Promise<void> {
     `SELECT id, topic, payload
        FROM ingest_outbox
       WHERE delivered_at IS NULL
-        AND attempts < 10
         AND (published_at IS NULL OR published_at < now() - interval '15 minutes')
       ORDER BY created_at
       LIMIT 50`,
@@ -56,14 +80,14 @@ async function tick(): Promise<void> {
       await publish(row.topic, JSON.stringify(row.payload));
       await pool.query(
         `UPDATE ingest_outbox
-            SET published_at = now(), attempts = attempts + 1, last_error = NULL
+            SET published_at = now(), attempts = 0, last_error = NULL
           WHERE id = $1`,
         [row.id],
       );
     } catch (error) {
       await pool.query(
         `UPDATE ingest_outbox
-            SET attempts = attempts + 1, last_error = $2
+            SET published_at = NULL, attempts = attempts + 1, last_error = $2
           WHERE id = $1`,
         [row.id, error instanceof Error ? error.message : String(error)],
       );
@@ -77,6 +101,15 @@ async function loop(): Promise<void> {
       await tick();
     } catch (error) {
       console.error("publisher: tick failed", error);
+    }
+    if (Date.now() - lastSweep >= RETENTION_INTERVAL_MS) {
+      try {
+        await sweep();
+      } catch (error) {
+        console.error("publisher: retention sweep failed", error);
+      } finally {
+        lastSweep = Date.now();
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
@@ -92,4 +125,14 @@ async function shutdown(): Promise<void> {
 process.on("SIGTERM", () => void shutdown());
 process.on("SIGINT", () => void shutdown());
 
-void loop();
+async function main(): Promise<void> {
+  try {
+    await sweep();
+  } catch (error) {
+    console.error("publisher: retention sweep failed", error);
+  }
+  lastSweep = Date.now();
+  await loop();
+}
+
+void main();

@@ -1,10 +1,17 @@
-import { randomUUID } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import { createHash, randomUUID } from "node:crypto";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ingestRequestSchema, gridId } from "@coredrive/protocol";
 import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { authenticate } from "../auth/authenticate.js";
 import { dedupeKey, normaliseObservation, type NormalisedObservation } from "../domain/observations.js";
+
+function credentialRateLimitKey(request: FastifyRequest): string {
+  const credential = request.headers.authorization ?? request.headers["x-api-key"];
+  const material =
+    typeof credential === "string" && credential.length > 0 ? credential : request.ip;
+  return createHash("sha256").update(material).digest("hex");
+}
 
 export async function ingestRoutes(app: FastifyInstance): Promise<void> {
   app.post(
@@ -12,7 +19,13 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
     {
       preHandler: authenticate,
       bodyLimit: 131072,
-      config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+          keyGenerator: credentialRateLimitKey,
+        },
+      },
     },
     async (request, reply) => {
       const auth = request.auth;
@@ -46,7 +59,12 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
         }
         prepared.push({
           obs: result.value,
-          key: dedupeKey(auth.username, obs, obs.lat, obs.lon),
+          key: dedupeKey(
+            auth.username,
+            result.value.obs,
+            result.value.obs.lat,
+            result.value.obs.lon,
+          ),
         });
       }
 
@@ -78,7 +96,7 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
             .send({ error: { code: "forbidden", message: "Session belongs to another user" } });
         }
 
-        await client.query(
+        const sessionUpsert = await client.query<{ id: string }>(
           `INSERT INTO sessions (id, user_id, started_at, last_seen_at, client, app_version, device_model, radio_freq)
            VALUES ($1, $2, now(), now(), $3, $4, $5, $6)
            ON CONFLICT (id) DO UPDATE
@@ -86,7 +104,9 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
                  client = COALESCE(EXCLUDED.client, sessions.client),
                  app_version = COALESCE(EXCLUDED.app_version, sessions.app_version),
                  device_model = COALESCE(EXCLUDED.device_model, sessions.device_model),
-                 radio_freq = COALESCE(EXCLUDED.radio_freq, sessions.radio_freq)`,
+                 radio_freq = COALESCE(EXCLUDED.radio_freq, sessions.radio_freq)
+           WHERE sessions.user_id = EXCLUDED.user_id
+           RETURNING id`,
           [
             sessionId,
             auth.userId,
@@ -96,6 +116,13 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
             session?.radioFreq ?? null,
           ],
         );
+
+        if (sessionUpsert.rowCount === 0) {
+          await client.query("ROLLBACK");
+          return reply
+            .code(403)
+            .send({ error: { code: "forbidden", message: "Session belongs to another user" } });
+        }
 
         let accepted = 0;
         let duplicates = 0;
@@ -111,7 +138,7 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
             source: item.obs.obs.type === "OBS" ? "pwa" : "api",
             receivedAt: new Date().toISOString(),
             dedupeKey: item.key,
-            obs: item.obs.obs,
+            obs: { ...item.obs.obs, rawFrame: undefined },
           };
 
           const inserted = await client.query(
@@ -135,13 +162,7 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
           }
         }
 
-        await client.query(
-          `UPDATE sessions
-              SET obs_count = obs_count + $2,
-                  last_seen_at = now()
-            WHERE id = $1`,
-          [sessionId, accepted],
-        );
+        await client.query("UPDATE sessions SET last_seen_at = now() WHERE id = $1", [sessionId]);
 
         await client.query("COMMIT");
 

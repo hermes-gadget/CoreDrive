@@ -5,6 +5,7 @@ import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { verifyMqttCredentials } from "../auth/mqttVerify.js";
 import { signToken } from "../auth/tokens.js";
+import { authenticate } from "../auth/authenticate.js";
 
 const loginSchema = z.object({
   username: z.string().regex(/^[A-Za-z0-9_.@-]{1,128}$/),
@@ -68,4 +69,17 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       });
     },
   );
+
+  app.post("/api/v1/auth/logout", { preHandler: authenticate }, async (request, reply) => {
+    const auth = request.auth!;
+    if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
+
+    await pool.query(
+      `UPDATE auth_sessions SET revoked_at = now()
+        WHERE sid = $1 AND revoked_at IS NULL`,
+      [auth.sid],
+    );
+
+    return reply.code(204).send();
+  });
 }

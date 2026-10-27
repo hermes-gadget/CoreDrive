@@ -11,6 +11,20 @@ export type NormaliseResult =
   | { ok: true; value: NormalisedObservation }
   | { ok: false; error: string };
 
+const ROUTE_TYPE_TRANSPORT_FLOOD = 0;
+const ROUTE_TYPE_FLOOD = 1;
+const PAYLOAD_TYPE_TRACE = 9;
+
+/**
+ * MeshCore only builds a repeater path on flood routes; direct routes carry the
+ * remaining destinations and TRACE payloads carry per-hop SNR data, so neither
+ * identifies a repeater that heard the packet.
+ */
+function derivesHeardId(routeType: number, packetType: number): boolean {
+  const isFlood = routeType === ROUTE_TYPE_TRANSPORT_FLOOD || routeType === ROUTE_TYPE_FLOOD;
+  return isFlood && packetType !== PAYLOAD_TYPE_TRACE;
+}
+
 export function normaliseObservation(obs: Observation): NormaliseResult {
   const now = Math.floor(Date.now() / 1000);
   if (obs.time > now + 600) return { ok: false, error: "timestamp is in the future" };
@@ -34,6 +48,20 @@ export function normaliseObservation(obs: Observation): NormaliseResult {
   }
 
   const last = obs.path[obs.path.length - 1]!.toLowerCase();
+  if (!derivesHeardId(obs.routeType, obs.packetType)) {
+    if (obs.heardId) {
+      return { ok: false, error: "heard id is only defined for flood, non-trace observations" };
+    }
+    return {
+      ok: true,
+      value: {
+        obs: { ...obs, heardId: undefined },
+        heardId: null,
+        lowResolution: obs.hashSize < 2,
+      },
+    };
+  }
+
   if (obs.heardId && obs.heardId.toLowerCase() !== last) {
     return { ok: false, error: "heard id does not match the last path hop" };
   }

@@ -9,6 +9,7 @@ import { publicRoutes } from "./routes/public.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
+    trustProxy: true,
     logger: {
       level: config.LOG_LEVEL,
       enabled: config.NODE_ENV !== "test",

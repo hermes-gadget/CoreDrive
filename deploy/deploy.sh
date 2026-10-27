@@ -22,7 +22,8 @@ docker compose "${compose_args[@]}" --env-file .env restart web
 docker compose "${compose_args[@]}" --env-file .env ps
 
 for _ in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:3011/healthz >/dev/null; then
+  if curl -fsS http://127.0.0.1:3011/api/v1/healthz >/dev/null \
+     && curl -fsS http://127.0.0.1:3011/readyz >/dev/null; then
     break
   fi
   sleep 1
@@ -30,3 +31,4 @@ done
 
 curl -fsS http://127.0.0.1:3011/healthz
 curl -fsS http://127.0.0.1:3011/api/v1/healthz
+curl -fsS http://127.0.0.1:3011/readyz
