@@ -224,6 +224,9 @@ export function App() {
           <p className="mono">
             <a href="https://wardrive.nemesh.uk">https://wardrive.nemesh.uk</a>
           </p>
+          <p className="mono">
+            <a href="/map">Open the audibility map</a>
+          </p>
         </section>
       )}
 
