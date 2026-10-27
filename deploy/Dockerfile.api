@@ -3,14 +3,21 @@ WORKDIR /app
 
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
+COPY apps/publisher/package.json apps/publisher/package.json
+COPY apps/ingest/package.json apps/ingest/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
 RUN npm ci
 
 COPY tsconfig.base.json ./
 COPY apps/api apps/api
+COPY apps/publisher apps/publisher
+COPY apps/ingest apps/ingest
 COPY packages/protocol packages/protocol
 
-RUN npm run build -w @coredrive/protocol && npm run build -w @coredrive/api
+RUN npm run build -w @coredrive/protocol \
+ && npm run build -w @coredrive/api \
+ && npm run build -w @coredrive/publisher \
+ && npm run build -w @coredrive/ingest
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
@@ -18,10 +25,14 @@ ENV NODE_ENV=production
 
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
+COPY apps/publisher/package.json apps/publisher/package.json
+COPY apps/ingest/package.json apps/ingest/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
 RUN npm ci --omit=dev
 
 COPY --from=build /app/apps/api/dist apps/api/dist
+COPY --from=build /app/apps/publisher/dist apps/publisher/dist
+COPY --from=build /app/apps/ingest/dist apps/ingest/dist
 COPY --from=build /app/packages/protocol/dist packages/protocol/dist
 COPY db db
 
