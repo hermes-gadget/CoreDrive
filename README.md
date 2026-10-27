@@ -2,7 +2,7 @@
 
 Passive coverage logging for MeshCore. Your phone connects to a companion radio over Bluetooth, records every packet the radio hears, and publishes the observations to an MQTT feed. The map answers one question: what can the radio hear here?
 
-**Status:** scaffold. The staging shell is up; the ingest API, database and PWA are being built. Nothing in this repository transmits.
+**Status:** live at https://wardrive.nemesh.uk. Passive only. The PWA, ingest API, publisher, map and privacy page are deployed; the feed and login use the production UKMesh broker.
 
 ## What it does
 
@@ -11,6 +11,7 @@ Passive coverage logging for MeshCore. Your phone connects to a companion radio 
 - Treats the last path hop as the repeater that was heard; earlier hops are kept as topology.
 - Publishes one observation per message on `wardrive/<username>/packets`.
 - Stores its own copy in its own PostgreSQL/Timescale database.
+- Shows a public map of snapped grid cells and a private exact view for the account that recorded it.
 
 ## What it does not do
 
@@ -18,7 +19,7 @@ Passive coverage logging for MeshCore. Your phone connects to a companion radio 
 - It is not a MeshMapper replacement, fork or scraper.
 - It does not transmit. Ever.
 
-## Planned stack
+## Stack
 
 - API: TypeScript, Fastify, zod
 - Data: PostgreSQL 16 + TimescaleDB
@@ -52,11 +53,11 @@ curl -sS http://127.0.0.1:3011/api/v1/healthz
 
 Checks: `npm run typecheck`, `npm test`, `npm run build`.
 
-The API runs on port 3000 inside the compose network; nginx serves the static shell and proxies `/api/` and `/readyz`.
+The API runs on port 3000 inside the compose network; nginx serves the static shell and proxies `/api/`, `/readyz` and the authenticated `/metrics` endpoint.
 
 ## Privacy
 
-Public maps show snapped grid cells, not tracks. Exact coordinates are visible only to the account that recorded them. Raw observations are retained for 180 days. Accounts are existing UKMesh MQTT identities; there is no signup.
+Public maps show snapped grid cells, not tracks. Exact coordinates are visible only to the account that recorded them. Raw observations are retained for 180 days. Accounts are existing UKMesh MQTT identities; there is no signup. The public policy is at https://wardrive.nemesh.uk/privacy.
 
 ## Licence
 
