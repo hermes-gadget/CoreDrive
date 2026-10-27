@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @coredrive/protocol && npm run build -w @coredrive/api",
+    "build": "npm run build -w @coredrive/protocol && npm run build -w @coredrive/api && npm run build -w @coredrive/publisher && npm run build -w @coredrive/ingest",
     "typecheck": "npm run build -w @coredrive/protocol && npm run typecheck --workspaces --if-present",
     "test": "npm run build -w @coredrive/protocol && npm run test --workspaces --if-present",
     "dev:api": "npm run dev -w @coredrive/api",

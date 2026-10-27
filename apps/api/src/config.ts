@@ -7,6 +7,13 @@ const Env = z.object({
   LOG_LEVEL: z.string().default("info"),
   DATABASE_URL: z.string().min(1).optional(),
   PUBLIC_BASE_URL: z.string().default("http://localhost:3011"),
+  TOKEN_SECRET: z.string().min(16).default("dev-secret-change-me"),
+  TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  MQTT_VERIFY_URL: z.string().default("wss://mqtt.ukmesh.com:443"),
+  MQTT_URL: z.string().default("wss://mqtt.ukmesh.com:443"),
+  MQTT_USERNAME: z.string().optional(),
+  MQTT_PASSWORD: z.string().optional(),
+  MQTT_TOPIC_PREFIX: z.string().default("wardrive"),
 });
 
 export type Config = z.infer<typeof Env>;
