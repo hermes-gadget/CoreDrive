@@ -104,7 +104,15 @@ h1 {
   word-break: break-all;
 }
 
+.mono a {
+  color: var(--accent);
+  display: inline-block;
+  padding: 0.75rem 0;
+  min-height: 44px;
+}
+
 .form { display: grid; gap: 0.9rem; max-width: 22rem; }
+.form button { width: 100%; }
 
 label {
   display: grid;
@@ -118,7 +126,7 @@ label {
 input {
   width: 100%;
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid #2b3b47;
   color: var(--text);
   font: inherit;
   font-size: 1rem;

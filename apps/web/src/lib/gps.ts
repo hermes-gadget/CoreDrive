@@ -24,6 +24,7 @@ export function watchGps(
 }
 
 export function isPhone(): boolean {
+  if (new URLSearchParams(window.location.search).has("bench")) return true;
   const mobile =
     (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile ??
     /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent);

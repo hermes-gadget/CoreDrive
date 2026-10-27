@@ -24,6 +24,7 @@ export function App() {
   const [deviceName, setDeviceName] = useState("");
   const [counters, setCounters] = useState<Counters>(EMPTY);
   const [error, setError] = useState<string | null>(null);
+  const [gpsError, setGpsError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const connection = useRef<CompanionConnection | null>(null);
@@ -37,8 +38,9 @@ export function App() {
       (next) => {
         fixRef.current = next;
         setFix(next);
+        setGpsError(null);
       },
-      (message) => setError(`GPS: ${message}`),
+      (message) => setGpsError(`GPS: ${message}`),
     );
     return () => navigator.geolocation.clearWatch(watch);
   }, []);
@@ -219,7 +221,9 @@ export function App() {
           <p className="lede">
             CoreDrive connects to a MeshCore radio over Bluetooth. Desktop browsers cannot do that.
           </p>
-          <p className="mono">https://wardrive.nemesh.uk</p>
+          <p className="mono">
+            <a href="https://wardrive.nemesh.uk">https://wardrive.nemesh.uk</a>
+          </p>
         </section>
       )}
 
@@ -271,6 +275,7 @@ export function App() {
             <p className="meta">Waiting for a GPS fix.</p>
           )}
           {error && <p className="error">{error}</p>}
+          {gpsError && <p className="error">{gpsError}</p>}
           <button className="link" onClick={signOut}>
             Sign out
           </button>
@@ -299,6 +304,7 @@ export function App() {
             {fix ? `${fix.lat.toFixed(4)}, ${fix.lon.toFixed(4)}` : "No GPS fix yet"}
           </p>
           {counters.lastError && <p className="error">{counters.lastError}</p>}
+          {gpsError && <p className="error">{gpsError}</p>}
           <button className="stop" onClick={() => void stop()}>
             Stop
           </button>
