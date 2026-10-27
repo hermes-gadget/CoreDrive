@@ -80,6 +80,7 @@ export function App() {
       liveRef.current = false;
       sessionRef.current = null;
       ownerRef.current = null;
+      pendingConnect.current = null;
       connection.current?.disconnect();
       connection.current = null;
       setConnected(false);
@@ -144,16 +145,21 @@ export function App() {
             // Terminal failures drop only this session group. A revoked token
             // sends the user back to sign-in without touching the queue.
             if (error instanceof UploadError && error.status === 401) {
-              clearSession();
+              // A later tab may have signed in while this request was pending.
+              // Only clear the session that actually failed.
+              if (getSession()?.token === token) {
+                clearSession();
+                setUsername(null);
+                setStage("login");
+                setError("Session expired");
+              }
               liveRef.current = false;
               sessionRef.current = null;
               ownerRef.current = null;
+              pendingConnect.current = null;
               connection.current?.disconnect();
               connection.current = null;
               setConnected(false);
-              setUsername(null);
-              setStage("login");
-              setError("Session expired");
               return;
             }
             if (error instanceof UploadError && error.status === 400) {
@@ -282,6 +288,7 @@ export function App() {
     setError(null);
     const attempt = Symbol("connect");
     pendingConnect.current = attempt;
+    const initiatingToken = getToken();
     try {
       const next = new CompanionConnection();
       next.onFrame(onFrame);
@@ -294,7 +301,7 @@ export function App() {
       await next.connect();
       // Sign-out can happen while the GATT handshake is in flight. Never adopt
       // a connection that belongs to an attempt the user has abandoned.
-      if (pendingConnect.current !== attempt || !getToken()) {
+      if (pendingConnect.current !== attempt || !initiatingToken || getToken() !== initiatingToken) {
         next.disconnect();
         return;
       }
