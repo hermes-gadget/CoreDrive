@@ -19,7 +19,7 @@ pool.on("error", (error) => console.error("ingest: idle database client error", 
 const client = mqtt.connect(env.MQTT_URL, {
   username: env.MQTT_USERNAME,
   password: env.MQTT_PASSWORD,
-  clientId: `coredrive-ingest-${process.pid}`,
+  clientId: "coredrive-ingest",
   reconnectPeriod: 2000,
   connectTimeout: 10000,
   clean: false,
