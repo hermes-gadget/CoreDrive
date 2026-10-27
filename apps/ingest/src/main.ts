@@ -39,6 +39,34 @@ client.on("connect", () => {
 });
 client.on("error", (error) => console.error("ingest: mqtt error", error.message));
 
+let consumedDelta = 0;
+let heartbeatBusy = false;
+
+async function flushHeartbeat(): Promise<void> {
+  if (heartbeatBusy) return;
+  heartbeatBusy = true;
+  try {
+    await pool.query(
+      `INSERT INTO service_status (service, updated_at, mqtt_connected, consumed_total)
+       VALUES ('ingest', now(), $1, $2)
+       ON CONFLICT (service) DO UPDATE
+         SET updated_at = now(),
+             mqtt_connected = EXCLUDED.mqtt_connected,
+             consumed_total = service_status.consumed_total + EXCLUDED.consumed_total`,
+      [client.connected, consumedDelta],
+    );
+    consumedDelta = 0;
+  } catch (error) {
+    console.error("ingest: heartbeat failed", error instanceof Error ? error.message : error);
+  } finally {
+    heartbeatBusy = false;
+  }
+}
+
+const heartbeat = setInterval(() => void flushHeartbeat(), 5000);
+heartbeat.unref();
+void flushHeartbeat();
+
 async function store(db: pg.PoolClient, raw: Buffer): Promise<void> {
   let parsedJson: unknown;
   try {
@@ -161,6 +189,7 @@ async function store(db: pg.PoolClient, raw: Buffer): Promise<void> {
     );
 
     await db.query("COMMIT");
+    consumedDelta += 1;
   } catch (error) {
     await db.query("ROLLBACK");
     throw error;

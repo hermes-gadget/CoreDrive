@@ -1,0 +1,85 @@
+groups:
+  - name: coredrive
+    rules:
+      - alert: CoreDriveOutboxDepthHigh
+        expr: coredrive_outbox_pending > 5000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: CoreDrive outbox depth above 5000
+          description: Publisher is not draining MQTT deliveries.
+          runbook: https://github.com/hermes-gadget/CoreDrive/blob/main/docs/RUNBOOK.md#broker-down
+
+      - alert: CoreDriveOutboxOldest
+        expr: coredrive_outbox_oldest_seconds > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: CoreDrive oldest undelivered message is over 15 minutes
+          description: Check broker reachability and publisher logs.
+          runbook: https://github.com/hermes-gadget/CoreDrive/blob/main/docs/RUNBOOK.md#broker-down
+
+      - alert: CoreDriveMqttDown
+        expr: coredrive_mqtt_connected == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CoreDrive MQTT client disconnected
+          description: Publisher or ingest cannot reach the broker.
+          runbook: https://github.com/hermes-gadget/CoreDrive/blob/main/docs/RUNBOOK.md#broker-down
+
+      - alert: CoreDriveIngestStale
+        expr: coredrive_service_last_seen_seconds{service="ingest"} > 300
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: CoreDrive ingest heartbeat is stale
+          description: Consumer is down or not acknowledging messages.
+          runbook: https://github.com/hermes-gadget/CoreDrive/blob/main/docs/RUNBOOK.md#consumer-lag
+
+      - alert: CoreDriveHttp5xx
+        expr: |
+          sum(rate(coredrive_http_requests_total{status=~"5.."}[10m]))
+            /
+          clamp_min(sum(rate(coredrive_http_requests_total[10m])), 0.001)
+            > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: CoreDrive 5xx rate above 1 percent
+          description: Check API logs and database health.
+          runbook: https://github.com/hermes-gadget/CoreDrive/blob/main/docs/RUNBOOK.md#database-down
+
+      - alert: CoreDriveDatabaseUnavailable
+        expr: coredrive_db_available == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CoreDrive database unavailable
+          description: API cannot reach Postgres.
+          runbook: https://github.com/hermes-gadget/CoreDrive/blob/main/docs/RUNBOOK.md#database-down
+
+      - alert: CoreDriveLoginFailures
+        expr: increase(coredrive_login_total{result="failure"}[15m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: CoreDrive login failures above 50 in 15 minutes
+          description: Possible credential stuffing; check source addresses and rate limits.
+
+      - alert: CoreDriveScrapeDown
+        expr: up{job="coredrive"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CoreDrive metrics endpoint is down
+          description: Public hostname, tunnel, nginx or API is unavailable.
+          runbook: https://github.com/hermes-gadget/CoreDrive/blob/main/docs/RUNBOOK.md#tunnel-failure

@@ -5,6 +5,7 @@ import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { authenticate } from "../auth/authenticate.js";
 import { dedupeKey, normaliseObservation, type NormalisedObservation } from "../domain/observations.js";
+import { ingestItems } from "../metrics.js";
 
 function credentialRateLimitKey(request: FastifyRequest): string {
   const authorization = request.headers.authorization;
@@ -74,6 +75,7 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
       }
 
       if (prepared.length === 0) {
+        ingestItems.inc({ result: "rejected" }, errors.length);
         return reply.code(400).send({
           error: { code: "invalid_payload", message: "No valid observations", details: errors },
         });
@@ -173,6 +175,10 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
         await client.query("UPDATE sessions SET last_seen_at = now() WHERE id = $1", [sessionId]);
 
         await client.query("COMMIT");
+
+        ingestItems.inc({ result: "accepted" }, accepted);
+        ingestItems.inc({ result: "duplicate" }, duplicates);
+        ingestItems.inc({ result: "rejected" }, errors.length);
 
         return reply.code(202).send({
           accepted,

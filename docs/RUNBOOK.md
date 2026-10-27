@@ -13,6 +13,19 @@
 
 Stack root: `/home/ben/coredrive/repo/deploy`.
 
+## Metrics
+
+`GET /metrics` is served by the API and proxied by nginx. It requires `METRICS_TOKEN` from `deploy/.env`:
+
+```bash
+curl -fsS https://wardrive.nemesh.uk/metrics \
+  -H "Authorization: Bearer $METRICS_TOKEN"
+```
+
+If `METRICS_TOKEN` is unset the endpoint returns 404; a wrong token returns 401. Prometheus on `zima` scrapes the public hostname every 30 seconds with a bearer token stored in `/etc/prometheus/coredrive-metrics-token`. Alert rules live at `deploy/prometheus/coredrive.rules.yml`.
+
+Metrics cover HTTP requests and latency, ingest results, login results, active sessions, observations per minute, outbox depth and age, MQTT connection state, publisher and consumer counters, service heartbeats, database availability and database size.
+
 ## Deploy
 
 ```bash
@@ -106,5 +119,4 @@ Suspended users fail login and API-key auth. Their existing data remains until d
 ## Known gaps
 
 - The UKMesh broker grant for `wardrive-svc` is not provisioned; staging uses its own Mosquitto.
-- No Prometheus scrape job or alert rules are wired yet; `/metrics` is available on the API.
 - No service worker; the app shell is not cached offline, but the observation queue is.
