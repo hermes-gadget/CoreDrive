@@ -1,7 +1,14 @@
 import type { Observation } from "@coredrive/protocol";
 
+export const SESSION_STORAGE_KEY = "coredrive.session";
+const SESSION_KEY = SESSION_STORAGE_KEY;
 const TOKEN_KEY = "coredrive.token";
 const USERNAME_KEY = "coredrive.username";
+
+interface StoredSession {
+  token: string;
+  username: string;
+}
 
 export interface SessionInfo {
   id?: string;
@@ -28,20 +35,52 @@ export class UploadError extends Error {
   }
 }
 
+function readStoredSession(): StoredSession | null {
+  const raw = localStorage.getItem(SESSION_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<StoredSession>;
+      if (typeof parsed.token === "string" && typeof parsed.username === "string") {
+        return { token: parsed.token, username: parsed.username };
+      }
+    } catch {
+      // Fall through to the legacy pair.
+    }
+  }
+
+  // Migrate the old split keys in one write, so a concurrent tab cannot pair a
+  // token from one account with the username from another.
+  const token = localStorage.getItem(TOKEN_KEY);
+  const username = localStorage.getItem(USERNAME_KEY);
+  if (!token || !username) return null;
+
+  const session = { token, username };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USERNAME_KEY);
+  return session;
+}
+
+export function getSession(): StoredSession | null {
+  return readStoredSession();
+}
+
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return readStoredSession()?.token ?? null;
 }
 
 export function getUsername(): string | null {
-  return localStorage.getItem(USERNAME_KEY);
+  return readStoredSession()?.username ?? null;
 }
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(SESSION_KEY);
 }
 
 /** Forget both halves of the session so a stale name can never outlive its token. */
 export function clearSession(): void {
+  localStorage.removeItem(SESSION_KEY);
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USERNAME_KEY);
 }
@@ -58,10 +97,15 @@ export async function login(username: string, password: string): Promise<void> {
     throw new Error(body?.error?.message ?? "Login failed");
   }
 
-  const body = (await response.json()) as { token: string };
-  clearSession();
-  localStorage.setItem(TOKEN_KEY, body.token);
-  localStorage.setItem(USERNAME_KEY, username);
+  const body = (await response.json()) as { token: string; user?: { username?: string } };
+  const session = {
+    token: body.token,
+    username: body.user?.username ?? username,
+  };
+  // One atomic record: token and username can never be read as a mixed pair.
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USERNAME_KEY);
 }
 
 /**

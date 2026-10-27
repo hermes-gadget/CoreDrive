@@ -4,7 +4,17 @@ import { CompanionConnection } from "./lib/ble.js";
 import { decodeRssi, packetHash, parseFrame } from "./lib/frame.js";
 import { isPhone, watchGps, type Fix } from "./lib/gps.js";
 import { acknowledge, count, enqueue, pending, retryLater } from "./lib/queue.js";
-import { clearSession, getToken, getUsername, login, logout, upload, UploadError } from "./lib/api.js";
+import {
+  clearSession,
+  getSession,
+  getToken,
+  getUsername,
+  login,
+  logout,
+  SESSION_STORAGE_KEY,
+  upload,
+  UploadError,
+} from "./lib/api.js";
 
 type Stage = "gate" | "login" | "radio" | "live" | "summary";
 
@@ -62,6 +72,27 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== SESSION_STORAGE_KEY) return;
+      const next = getUsername();
+      if (next === username && !liveRef.current) return;
+
+      liveRef.current = false;
+      sessionRef.current = null;
+      ownerRef.current = null;
+      connection.current?.disconnect();
+      connection.current = null;
+      setConnected(false);
+      setUsername(next);
+      setStage(next ? "radio" : "login");
+      setError(next ? "Session changed in another tab" : "Signed out in another tab");
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [username]);
+
+  useEffect(() => {
     if (!username) return;
     const timer = window.setInterval(() => {
       void count(username).then((queued) => setCounters((current) => ({ ...current, queued })));
@@ -72,9 +103,10 @@ export function App() {
   const flush = useCallback(async () => {
     if (flushing.current) return;
 
-    const account = getUsername();
-    const token = getToken();
-    if (!account || !token) return;
+    const snapshot = getSession();
+    if (!snapshot) return;
+    const account = snapshot.username;
+    const token = snapshot.token;
 
     flushing.current = true;
     try {
@@ -83,7 +115,7 @@ export function App() {
 
       // The signed-in account can change while the queue is being read. Send only
       // when both the owner and the token are still the ones we selected for.
-      if (getUsername() !== account || getToken() !== token) return;
+      if (getSession()?.token !== token || getSession()?.username !== account) return;
 
       try {
         const groups = new Map<string, typeof items>();
@@ -109,8 +141,21 @@ export function App() {
               token,
             );
           } catch (error) {
-            // A 400 means the whole group is terminally invalid. Drop it and
-            // keep draining independent sessions instead of retrying forever.
+            // Terminal failures drop only this session group. A revoked token
+            // sends the user back to sign-in without touching the queue.
+            if (error instanceof UploadError && error.status === 401) {
+              clearSession();
+              liveRef.current = false;
+              sessionRef.current = null;
+              ownerRef.current = null;
+              connection.current?.disconnect();
+              connection.current = null;
+              setConnected(false);
+              setUsername(null);
+              setStage("login");
+              setError("Session expired");
+              return;
+            }
             if (error instanceof UploadError && error.status === 400) {
               await acknowledge(group.map((item) => item.id));
               rejected += group.length;
