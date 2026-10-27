@@ -30,6 +30,15 @@ function hex(bytes: Uint8Array): string {
 }
 
 /**
+ * The companion packs RSSI into an int8. Readings below -128 wrap into the
+ * positive range, so recover the negative dBm value from the whole byte.
+ */
+export function decodeRssi(byte: number): number {
+  const signed = (byte << 24) >> 24;
+  return signed > 0 ? signed - 256 : signed;
+}
+
+/**
  * Mirror of MeshCore Packet::isValidPathLen: hash size 4 is reserved, and the
  * encoded path may never exceed MAX_PATH_SIZE bytes.
  */

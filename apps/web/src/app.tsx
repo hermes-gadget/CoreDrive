@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Observation } from "@coredrive/protocol";
 import { CompanionConnection } from "./lib/ble.js";
-import { hexFrame, packetHash, parseFrame } from "./lib/frame.js";
+import { decodeRssi, hexFrame, packetHash, parseFrame } from "./lib/frame.js";
 import { isPhone, watchGps, type Fix } from "./lib/gps.js";
 import { acknowledge, count, enqueue, pending, retryLater } from "./lib/queue.js";
 import { clearSession, getToken, getUsername, login, logout, upload } from "./lib/api.js";
@@ -40,6 +40,7 @@ export function App() {
   const fixRef = useRef<Fix | null>(null);
   const liveRef = useRef(false);
   const sessionRef = useRef<string | null>(null);
+  const ownerRef = useRef<string | null>(null);
   const flushing = useRef(false);
 
   useEffect(() => {
@@ -84,17 +85,44 @@ export function App() {
       if (getUsername() !== account || getToken() !== token) return;
 
       try {
-        await upload(
-          { client: "pwa", appVersion: "0.1.0", device: connection.current?.name ?? "companion" },
-          items.map((item) => item.obs),
-          token,
-        );
-        await acknowledge(items.map((item) => item.id));
+        const groups = new Map<string, typeof items>();
+        for (const item of items) {
+          const group = groups.get(item.sessionId) ?? [];
+          group.push(item);
+          groups.set(item.sessionId, group);
+        }
+
+        let sent = 0;
+        let rejected = 0;
+        for (const [sessionId, group] of groups) {
+          const result = await upload(
+            {
+              id: sessionId,
+              client: "pwa",
+              appVersion: "0.1.0",
+              device: connection.current?.name ?? "companion",
+            },
+            group.map((item) => item.obs),
+            token,
+          );
+
+          // A 202 can still contain rejected rows. Keep those visible and
+          // acknowledge only what the server accepted or already had.
+          const bad = new Set(result.errors.map((error) => error.index));
+          const accepted = group.filter((_, index) => !bad.has(index));
+          const rejectedItems = group.filter((_, index) => bad.has(index));
+          // Terminal validation failures are dropped so they cannot trap valid
+          // observations in the same batch forever.
+          await acknowledge([...accepted, ...rejectedItems].map((item) => item.id));
+          sent += accepted.length;
+          rejected += result.rejected;
+        }
+
         setCounters((current) => ({
           ...current,
-          sent: current.sent + items.length,
-          queued: Math.max(0, current.queued - items.length),
-          lastError: null,
+          sent: current.sent + sent,
+          queued: Math.max(0, current.queued - sent - rejected),
+          lastError: rejected > 0 ? `${rejected} observations rejected` : null,
         }));
       } catch (uploadError) {
         await retryLater(items.map((item) => item.id), 15000);
@@ -127,13 +155,14 @@ export function App() {
     if (!liveRef.current || frame.length < 4 || frame[0] !== 0x88) return;
 
     const snr = ((frame[1]! << 24) >> 24) / 4;
-    const rssi = (frame[2]! << 24) >> 24;
+    const rssi = decodeRssi(frame[2]!);
     const raw = frame.slice(3);
     const parsed = parseFrame(raw);
     const position = fixRef.current;
     const sessionId = sessionRef.current;
-    const account = getUsername();
+    const account = ownerRef.current;
     if (!parsed || !position || !sessionId || !account) return;
+    if (getUsername() !== account) return;
     if (position.accuracy > MAX_FIX_ACCURACY_M) return;
     if (Date.now() - position.time > MAX_FIX_AGE_MS) return;
 
@@ -211,6 +240,7 @@ export function App() {
 
   function start() {
     sessionRef.current = crypto.randomUUID();
+    ownerRef.current = username;
     liveRef.current = true;
     setCounters(EMPTY);
     setStage("live");
@@ -219,6 +249,7 @@ export function App() {
   function stop() {
     liveRef.current = false;
     sessionRef.current = null;
+    ownerRef.current = null;
     // Release the radio first: the queue uploader owns the backlog and keeps
     // retrying, so a stalled upload must never hold the connection open.
     connection.current?.disconnect();
@@ -235,6 +266,7 @@ export function App() {
     setUsername(null);
     liveRef.current = false;
     sessionRef.current = null;
+    ownerRef.current = null;
     connection.current?.disconnect();
     connection.current = null;
     setConnected(false);

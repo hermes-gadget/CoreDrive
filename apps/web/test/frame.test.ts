@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { packetHash, parseFrame } from "../src/lib/frame.js";
+import { decodeRssi, packetHash, parseFrame } from "../src/lib/frame.js";
 
 function frame(bytes: number[]): Uint8Array {
   return new Uint8Array(bytes);
@@ -85,6 +85,14 @@ describe("parseFrame", () => {
       for (let index = 0; index < length; index += 1) bytes[index] = (index * 37 + length) & 0xff;
       expect(() => parseFrame(bytes)).not.toThrow();
     }
+  });
+});
+
+describe("decodeRssi", () => {
+  it("recovers wrapped weak readings", () => {
+    expect(decodeRssi(0x7e)).toBe(-130);
+    expect(decodeRssi(0x80)).toBe(-128);
+    expect(decodeRssi(0x9c)).toBe(-100);
   });
 });
 
