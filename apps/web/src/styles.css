@@ -167,6 +167,15 @@ button.link {
   text-decoration: underline;
 }
 
+button.secondary {
+  width: 100%;
+  margin-top: 0.6rem;
+  background: none;
+  color: var(--text);
+  border: 1px solid var(--line);
+  font-weight: 500;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

@@ -283,7 +283,7 @@ export function App() {
     }
   }
 
-  async function connectRadio() {
+  async function connectRadio(showAll = false) {
     setBusy(true);
     setError(null);
     const attempt = Symbol("connect");
@@ -298,7 +298,7 @@ export function App() {
         setStage("radio");
         setError("Radio disconnected");
       });
-      await next.connect();
+      await next.connect({ allDevices: showAll });
       // Sign-out can happen while the GATT handshake is in flight. Never adopt
       // a connection that belongs to an attempt the user has abandoned.
       if (pendingConnect.current !== attempt || !initiatingToken || getToken() !== initiatingToken) {
@@ -411,9 +411,18 @@ export function App() {
             transmitted.
           </p>
           {!connected ? (
-            <button onClick={() => void connectRadio()} disabled={busy}>
-              {busy ? "Connecting…" : "Choose radio"}
-            </button>
+            <>
+              <button onClick={() => void connectRadio()} disabled={busy}>
+                {busy ? "Connecting…" : "Choose radio"}
+              </button>
+              <button className="secondary" onClick={() => void connectRadio(true)} disabled={busy}>
+                Show all Bluetooth devices
+              </button>
+              <p className="meta">
+                Radio not listed? Turn on Bluetooth and Location, close the MeshCore app, then try
+                again.
+              </p>
+            </>
           ) : (
             <>
               <p className="mono">{deviceName}</p>
