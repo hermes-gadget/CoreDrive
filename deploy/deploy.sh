@@ -8,10 +8,17 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-docker compose --env-file .env build
-docker compose --env-file .env run --rm api node apps/api/dist/db/migrate.js
-docker compose --env-file .env up -d --remove-orphans
-docker compose --env-file .env ps
+compose_args=(-f docker-compose.yml)
+if [[ -f docker-compose.staging.yml ]]; then
+  compose_args+=(-f docker-compose.staging.yml)
+fi
+
+docker compose "${compose_args[@]}" --env-file .env build
+docker compose "${compose_args[@]}" --env-file .env up -d db
+sleep 5
+docker compose "${compose_args[@]}" --env-file .env run --rm api node apps/api/dist/db/migrate.js
+docker compose "${compose_args[@]}" --env-file .env up -d --remove-orphans
+docker compose "${compose_args[@]}" --env-file .env ps
 
 for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:3011/healthz >/dev/null; then
