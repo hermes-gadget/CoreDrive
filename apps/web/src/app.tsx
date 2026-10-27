@@ -4,7 +4,7 @@ import { CompanionConnection } from "./lib/ble.js";
 import { hexFrame, packetHash, parseFrame } from "./lib/frame.js";
 import { isPhone, watchGps, type Fix } from "./lib/gps.js";
 import { acknowledge, count, enqueue, pending, retryLater } from "./lib/queue.js";
-import { clearToken, getToken, login, upload } from "./lib/api.js";
+import { clearSession, getToken, getUsername, login, logout, upload } from "./lib/api.js";
 
 type Stage = "gate" | "login" | "radio" | "live" | "summary";
 
@@ -17,8 +17,17 @@ interface Counters {
 
 const EMPTY: Counters = { frames: 0, queued: 0, sent: 0, lastError: null };
 
+/** Coordinates drift while the radio keeps moving, so a stale fix must not be stamped on new packets. */
+const MAX_FIX_AGE_MS = 15_000;
+const MAX_FIX_ACCURACY_M = 100;
+const UPLOAD_INTERVAL_MS = 5_000;
+
 export function App() {
-  const [stage, setStage] = useState<Stage>(() => (isPhone() ? (getToken() ? "radio" : "login") : "gate"));
+  const [username, setUsername] = useState<string | null>(() => getUsername());
+  const [stage, setStage] = useState<Stage>(() => {
+    if (!isPhone()) return "gate";
+    return getToken() && getUsername() ? "radio" : "login";
+  });
   const [fix, setFix] = useState<Fix | null>(null);
   const [connected, setConnected] = useState(false);
   const [deviceName, setDeviceName] = useState("");
@@ -31,7 +40,7 @@ export function App() {
   const fixRef = useRef<Fix | null>(null);
   const liveRef = useRef(false);
   const sessionRef = useRef<string | null>(null);
-  const flushTimer = useRef<number | null>(null);
+  const flushing = useRef(false);
 
   useEffect(() => {
     const watch = watchGps(
@@ -40,109 +49,126 @@ export function App() {
         setFix(next);
         setGpsError(null);
       },
-      (message) => setGpsError(`GPS: ${message}`),
+      (message) => {
+        // A failed fix invalidates the last one: never stamp new packets with it.
+        fixRef.current = null;
+        setFix(null);
+        setGpsError(`GPS: ${message}`);
+      },
     );
     return () => navigator.geolocation.clearWatch(watch);
   }, []);
 
   useEffect(() => {
+    if (!username) return;
     const timer = window.setInterval(() => {
-      void count().then((queued) => setCounters((current) => ({ ...current, queued })));
+      void count(username).then((queued) => setCounters((current) => ({ ...current, queued })));
     }, 1500);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [username]);
 
   const flush = useCallback(async () => {
-    const session = sessionRef.current;
-    if (!session || !getToken()) return;
+    if (flushing.current) return;
 
-    const items = await pending(100);
-    if (items.length === 0) return;
+    const account = getUsername();
+    const token = getToken();
+    if (!account || !token) return;
 
+    flushing.current = true;
     try {
-      await upload(
-        { client: "pwa", appVersion: "0.1.0", device: connection.current?.name ?? "companion" },
-        items.map((item) => item.obs),
-      );
-      await acknowledge(items.map((item) => item.id));
+      const items = await pending(account);
+      if (items.length === 0) return;
+
+      // The signed-in account can change while the queue is being read. Send only
+      // when both the owner and the token are still the ones we selected for.
+      if (getUsername() !== account || getToken() !== token) return;
+
+      try {
+        await upload(
+          { client: "pwa", appVersion: "0.1.0", device: connection.current?.name ?? "companion" },
+          items.map((item) => item.obs),
+          token,
+        );
+        await acknowledge(items.map((item) => item.id));
+        setCounters((current) => ({
+          ...current,
+          sent: current.sent + items.length,
+          queued: Math.max(0, current.queued - items.length),
+          lastError: null,
+        }));
+      } catch (uploadError) {
+        await retryLater(items.map((item) => item.id), 15000);
+        setCounters((current) => ({
+          ...current,
+          lastError: uploadError instanceof Error ? uploadError.message : "Upload failed",
+        }));
+      }
+    } catch (queueError) {
       setCounters((current) => ({
         ...current,
-        sent: current.sent + items.length,
-        queued: Math.max(0, current.queued - items.length),
-        lastError: null,
+        lastError: queueError instanceof Error ? queueError.message : "Queue unavailable",
       }));
-    } catch (uploadError) {
-      await retryLater(items.map((item) => item.id), 15000);
-      setCounters((current) => ({
-        ...current,
-        lastError: uploadError instanceof Error ? uploadError.message : "Upload failed",
-      }));
+    } finally {
+      flushing.current = false;
     }
   }, []);
 
-  const onFrame = useCallback(
-    (frame: Uint8Array) => {
-      if (!liveRef.current || frame.length < 4 || frame[0] !== 0x88) return;
-
-      const snr = ((frame[1]! << 24) >> 24) / 4;
-      const rssi = (frame[2]! << 24) >> 24;
-      const raw = frame.slice(3);
-      const parsed = parseFrame(raw);
-      const position = fixRef.current;
-      if (!parsed || !position || position.accuracy > 100) return;
-
-      const sessionId = sessionRef.current;
-      if (!sessionId) return;
-
-      void packetHash(raw).then(async (hash) => {
-        const obs: Observation = {
-          type: "OBS",
-          time: Math.floor(position.time / 1000),
-          lat: position.lat,
-          lon: position.lon,
-          accuracyM: Math.round(position.accuracy),
-          snr,
-          rssi,
-          routeType: parsed.routeType,
-          packetType: parsed.payloadType,
-          hops: parsed.hops,
-          hashSize: parsed.hashSize,
-          path: parsed.path,
-          heardId: parsed.heardId ?? undefined,
-          packetHash: hash,
-          payloadLen: parsed.payloadLen,
-          rawFrame: hexFrame(raw),
-        };
-
-        await enqueue({
-          id: crypto.randomUUID(),
-          sessionId,
-          obs,
-          attempts: 0,
-          nextAttemptAt: 0,
-        });
-
-        setCounters((current) => ({ ...current, frames: current.frames + 1 }));
-      });
-    },
-    [],
-  );
-
+  // Uploading is owned by the queue, not by the radio: it keeps draining while a
+  // session runs, after Stop, on the summary screen, and after a reload.
   useEffect(() => {
-    if (stage !== "live") {
-      if (flushTimer.current) window.clearInterval(flushTimer.current);
-      flushTimer.current = null;
-      return;
-    }
+    if (!username || !getToken()) return;
 
-    flushTimer.current = window.setInterval(() => void flush(), 5000);
     void flush();
+    const timer = window.setInterval(() => void flush(), UPLOAD_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [username, flush]);
 
-    return () => {
-      if (flushTimer.current) window.clearInterval(flushTimer.current);
-      flushTimer.current = null;
-    };
-  }, [stage, flush]);
+  const onFrame = useCallback((frame: Uint8Array) => {
+    if (!liveRef.current || frame.length < 4 || frame[0] !== 0x88) return;
+
+    const snr = ((frame[1]! << 24) >> 24) / 4;
+    const rssi = (frame[2]! << 24) >> 24;
+    const raw = frame.slice(3);
+    const parsed = parseFrame(raw);
+    const position = fixRef.current;
+    const sessionId = sessionRef.current;
+    const account = getUsername();
+    if (!parsed || !position || !sessionId || !account) return;
+    if (position.accuracy > MAX_FIX_ACCURACY_M) return;
+    if (Date.now() - position.time > MAX_FIX_AGE_MS) return;
+
+    void packetHash(raw).then(async (hash) => {
+      const obs: Observation = {
+        type: "OBS",
+        time: Math.floor(position.time / 1000),
+        lat: position.lat,
+        lon: position.lon,
+        accuracyM: Math.round(position.accuracy),
+        snr,
+        rssi,
+        routeType: parsed.routeType,
+        packetType: parsed.payloadType,
+        hops: parsed.hops,
+        hashSize: parsed.hashSize,
+        path: parsed.path,
+        heardId: parsed.heardId ?? undefined,
+        packetHash: hash,
+        payloadLen: parsed.payloadLen,
+        rawFrame: hexFrame(raw),
+      };
+
+      await enqueue({
+        id: crypto.randomUUID(),
+        username: account,
+        sessionId,
+        obs,
+        attempts: 0,
+        nextAttemptAt: 0,
+      });
+
+      setCounters((current) => ({ ...current, frames: current.frames + 1 }));
+    });
+  }, []);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -151,6 +177,7 @@ export function App() {
     setError(null);
     try {
       await login(String(form.get("username") ?? ""), String(form.get("password") ?? ""));
+      setUsername(getUsername());
       setStage("radio");
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Login failed");
@@ -189,18 +216,29 @@ export function App() {
     setStage("live");
   }
 
-  async function stop() {
+  function stop() {
     liveRef.current = false;
-    await flush();
+    sessionRef.current = null;
+    // Release the radio first: the queue uploader owns the backlog and keeps
+    // retrying, so a stalled upload must never hold the connection open.
     connection.current?.disconnect();
     connection.current = null;
     setConnected(false);
     setStage("summary");
+    void flush();
   }
 
-  function signOut() {
-    clearToken();
+  async function signOut() {
+    // Best effort revocation before the token is forgotten locally.
+    await logout();
+    clearSession();
+    setUsername(null);
+    liveRef.current = false;
+    sessionRef.current = null;
     connection.current?.disconnect();
+    connection.current = null;
+    setConnected(false);
+    setCounters(EMPTY);
     setStage("login");
   }
 
@@ -279,7 +317,7 @@ export function App() {
           )}
           {error && <p className="error">{error}</p>}
           {gpsError && <p className="error">{gpsError}</p>}
-          <button className="link" onClick={signOut}>
+          <button className="link" onClick={() => void signOut()}>
             Sign out
           </button>
         </section>
@@ -308,7 +346,7 @@ export function App() {
           </p>
           {counters.lastError && <p className="error">{counters.lastError}</p>}
           {gpsError && <p className="error">{gpsError}</p>}
-          <button className="stop" onClick={() => void stop()}>
+          <button className="stop" onClick={stop}>
             Stop
           </button>
         </section>

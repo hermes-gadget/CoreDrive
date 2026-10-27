@@ -11,6 +11,16 @@ export class CompanionConnection {
   private frameHandler: ((frame: Uint8Array) => void) | null = null;
   private disconnectHandler: (() => void) | null = null;
 
+  private readonly handleGattDisconnected = (): void => {
+    this.disconnectHandler?.();
+  };
+
+  private readonly handleFrameValue = (event: Event): void => {
+    const target = event.target as BluetoothRemoteGATTCharacteristic;
+    const value = target.value;
+    if (value) this.frameHandler?.(new Uint8Array(value.buffer));
+  };
+
   get name(): string {
     return this.device?.name ?? "MeshCore companion";
   }
@@ -32,32 +42,33 @@ export class CompanionConnection {
       throw new Error("Web Bluetooth is not available in this browser");
     }
 
-    this.device = await navigator.bluetooth.requestDevice({
+    const device = await navigator.bluetooth.requestDevice({
       filters: [{ services: [SERVICE_UUID] }],
     });
+    this.device = device;
+    device.addEventListener("gattserverdisconnected", this.handleGattDisconnected);
 
-    this.device.addEventListener("gattserverdisconnected", () => {
-      this.disconnectHandler?.();
-    });
+    try {
+      const server = await device.gatt?.connect();
+      if (!server) throw new Error("Could not connect to the radio");
 
-    const server = await this.device.gatt?.connect();
-    if (!server) throw new Error("Could not connect to the radio");
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      const characteristics = await service.getCharacteristics();
+      this.rx = characteristics.find((c) => c.uuid === RX_UUID) ?? null;
+      this.tx = characteristics.find((c) => c.uuid === TX_UUID) ?? null;
 
-    const service = await server.getPrimaryService(SERVICE_UUID);
-    const characteristics = await service.getCharacteristics();
-    this.rx = characteristics.find((c) => c.uuid === RX_UUID) ?? null;
-    this.tx = characteristics.find((c) => c.uuid === TX_UUID) ?? null;
+      if (!this.rx || !this.tx) throw new Error("Companion service is missing characteristics");
 
-    if (!this.rx || !this.tx) throw new Error("Companion service is missing characteristics");
+      await this.tx.startNotifications();
+      this.tx.addEventListener("characteristicvaluechanged", this.handleFrameValue);
 
-    await this.tx.startNotifications();
-    this.tx.addEventListener("characteristicvaluechanged", (event) => {
-      const target = event.target as BluetoothRemoteGATTCharacteristic;
-      const value = target.value;
-      if (value) this.frameHandler?.(new Uint8Array(value.buffer));
-    });
-
-    await this.sendAppStart();
+      await this.sendAppStart();
+    } catch (error) {
+      // Never leave a half-open GATT link or live listeners behind: the caller
+      // discards this instance and must not keep a radio still connected.
+      this.teardown();
+      throw error;
+    }
   }
 
   private async sendAppStart(): Promise<void> {
@@ -69,7 +80,9 @@ export class CompanionConnection {
     await this.rx?.writeValue(frame);
   }
 
-  disconnect(): void {
+  private teardown(): void {
+    this.device?.removeEventListener("gattserverdisconnected", this.handleGattDisconnected);
+    this.tx?.removeEventListener("characteristicvaluechanged", this.handleFrameValue);
     try {
       this.device?.gatt?.disconnect();
     } catch {
@@ -78,5 +91,11 @@ export class CompanionConnection {
     this.device = null;
     this.rx = null;
     this.tx = null;
+    this.frameHandler = null;
+    this.disconnectHandler = null;
+  }
+
+  disconnect(): void {
+    this.teardown();
   }
 }
