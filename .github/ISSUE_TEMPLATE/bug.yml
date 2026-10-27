@@ -1,0 +1,38 @@
+name: Bug report
+description: Something is broken or behaves differently from the documentation.
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the actual behaviour, with any error text.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Connect ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Phone, OS, browser, radio model and firmware version.
+  - type: checkboxes
+    id: passive
+    attributes:
+      label: Passive-only check
+      options:
+        - label: This report does not involve the app transmitting (it should never transmit).
