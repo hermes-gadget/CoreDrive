@@ -10,6 +10,8 @@ export const pool: pg.Pool | null = config.DATABASE_URL
     })
   : null;
 
+pool?.on("error", (error) => console.error("api: idle database client error", error));
+
 export async function checkDb(): Promise<boolean> {
   if (!pool) return false;
   try {
