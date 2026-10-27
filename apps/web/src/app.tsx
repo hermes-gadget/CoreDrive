@@ -477,7 +477,9 @@ export function App() {
 
       <footer className="foot">
         <span>passive only · zero transmissions</span>
-        <span>audibility, not TX coverage</span>
+        <span>
+          <a href="/privacy">privacy</a> · audibility, not TX coverage
+        </span>
       </footer>
     </main>
   );

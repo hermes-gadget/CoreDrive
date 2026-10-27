@@ -235,6 +235,50 @@ button.link {
 
 .legend { margin-top: 0.75rem; }
 
+.legal {
+  width: min(42rem, 100%);
+  padding: 2.25rem 0 1rem;
+}
+
+.legal h1 { font-size: clamp(2rem, 6vw, 3rem); }
+
+.legal h2 {
+  margin: 2.2rem 0 0.55rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+}
+
+.legal p,
+.legal li {
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+.legal ul { padding-left: 1.1rem; }
+
+.legal code {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+
+.legal a { color: var(--accent); }
+
+.legal-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+}
+
+.foot a { color: var(--muted); text-decoration: none; }
+.foot a:hover { color: var(--accent); }
+
 .leaflet-container {
   font: inherit;
   background: #0d1216;
