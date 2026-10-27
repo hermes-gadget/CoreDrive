@@ -1,7 +1,7 @@
 [Unit]
 Description=CoreDrive nightly database dump
-After=docker.service
-Requires=docker.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
