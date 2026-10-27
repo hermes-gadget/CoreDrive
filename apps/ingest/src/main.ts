@@ -78,6 +78,12 @@ async function store(db: pg.PoolClient, raw: Buffer): Promise<void> {
 
     if (envelope.generation !== user.data_generation) {
       await db.query("ROLLBACK");
+      await db.query(
+        `UPDATE ingest_outbox
+            SET delivered_at = now(), last_error = 'generation rejected'
+          WHERE id = $1`,
+        [envelope.id],
+      );
       return;
     }
 

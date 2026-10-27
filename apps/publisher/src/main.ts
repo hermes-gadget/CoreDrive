@@ -33,6 +33,7 @@ client.on("connect", () => console.log("publisher: mqtt connected"));
 client.on("error", (error) => console.error("publisher: mqtt error", error.message));
 
 function publish(topic: string, payload: string): Promise<void> {
+  if (!client.connected) return Promise.reject(new Error("mqtt disconnected"));
   return new Promise((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
