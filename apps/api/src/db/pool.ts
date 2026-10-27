@@ -10,6 +10,12 @@ export const pool: pg.Pool | null = config.DATABASE_URL
     })
   : null;
 
+// One handler per physical connection. Attaching per checkout would accumulate
+// listeners and retain request objects for the life of the connection.
+pool?.on("connect", (client) => {
+  client.on("error", (error) => console.error("api: database client error", error));
+});
+
 pool?.on("error", (error) => console.error("api: idle database client error", error));
 
 export async function checkDb(): Promise<boolean> {

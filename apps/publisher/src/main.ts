@@ -16,6 +16,9 @@ const RETENTION_INTERVAL_MS = 60 * 60 * 1000;
 
 const pool = new pg.Pool({ connectionString: env.DATABASE_URL, max: 5 });
 pool.on("error", (error) => console.error("publisher: idle database client error", error));
+pool.on("connect", (client) => {
+  client.on("error", (error) => console.error("publisher: database client error", error));
+});
 
 const client = mqtt.connect(env.MQTT_URL, {
   username: env.MQTT_USERNAME,
