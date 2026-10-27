@@ -90,6 +90,7 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
 
     const key = generateApiKey();
     const client = await pool.connect();
+    client.on("error", (error) => request.log.error(error, "api key database client error"));
     try {
       await client.query("BEGIN");
       await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [auth.userId]);
@@ -147,8 +148,10 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
     if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
 
     const client = await pool.connect();
+    client.on("error", (error) => request.log.error(error, "idle database client error"));
     try {
       await client.query("BEGIN");
+      await client.query("UPDATE users SET data_deleted_at = now() WHERE id = $1", [auth.userId]);
       const observations = await client.query(
         "DELETE FROM observations WHERE user_id = $1",
         [auth.userId],

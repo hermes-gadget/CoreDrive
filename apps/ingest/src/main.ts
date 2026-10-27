@@ -55,15 +55,20 @@ async function store(db: pg.PoolClient, raw: Buffer): Promise<void> {
 
   await db.query("BEGIN");
   try {
-    const userResult = await db.query<{ id: string; status: string }>(
+    const userResult = await db.query<{ id: string; status: string; data_deleted_at: Date | null }>(
       `INSERT INTO users (username, last_seen)
        VALUES ($1, now())
        ON CONFLICT (username) DO UPDATE SET last_seen = now()
-       RETURNING id, status`,
+       RETURNING id, status, data_deleted_at`,
       [envelope.username],
     );
     const user = userResult.rows[0];
     if (!user || user.status !== "active") {
+      await db.query("ROLLBACK");
+      return;
+    }
+
+    if (user.data_deleted_at && Date.parse(envelope.receivedAt) <= new Date(user.data_deleted_at).getTime()) {
       await db.query("ROLLBACK");
       return;
     }
@@ -142,6 +147,7 @@ async function store(db: pg.PoolClient, raw: Buffer): Promise<void> {
 
 async function storeMessage(raw: Buffer): Promise<void> {
   const db = await pool.connect();
+  db.on("error", (error) => console.error("ingest: checked-out database client error", error));
   try {
     await store(db, raw);
   } finally {

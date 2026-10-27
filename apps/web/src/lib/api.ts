@@ -4,10 +4,18 @@ const TOKEN_KEY = "coredrive.token";
 const USERNAME_KEY = "coredrive.username";
 
 export interface SessionInfo {
+  id?: string;
   client: string;
   appVersion: string;
   device: string;
   radioFreq?: string;
+}
+
+export interface UploadResult {
+  accepted: number;
+  rejected: number;
+  duplicates: number;
+  errors: Array<{ index: number; message: string }>;
 }
 
 export function getToken(): string | null {
@@ -69,7 +77,7 @@ export async function upload(
   session: SessionInfo,
   observations: Observation[],
   token = getToken(),
-): Promise<void> {
+): Promise<UploadResult> {
   if (!token) throw new Error("Not signed in");
 
   const response = await fetch("/api/v1/ingest", {
@@ -84,4 +92,6 @@ export async function upload(
   if (!response.ok) {
     throw new Error(`Upload failed (${response.status})`);
   }
+
+  return (await response.json()) as UploadResult;
 }

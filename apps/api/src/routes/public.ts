@@ -24,7 +24,12 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const { mode, days, bbox, limit } = parsed.data;
-    const modeFilter = mode === "direct" ? "hops = 0" : mode === "relayed" ? "hops > 0" : "true";
+    const modeFilter =
+      mode === "direct"
+        ? "route_type IN (0, 1) AND packet_type <> 9 AND hops = 0"
+        : mode === "relayed"
+          ? "route_type IN (0, 1) AND packet_type <> 9 AND hops > 0"
+          : "true";
 
     let bounds: number[] | null = null;
     if (bbox) bounds = bbox.split(",").map(Number);

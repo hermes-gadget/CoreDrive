@@ -9,7 +9,7 @@ if [[ ! -f .env ]]; then
 fi
 
 compose_args=(-f docker-compose.yml)
-if [[ -f docker-compose.staging.yml ]]; then
+if [[ "${DEPLOY_MODE:-staging}" == "staging" && -f docker-compose.staging.yml ]]; then
   compose_args+=(-f docker-compose.staging.yml)
 fi
 

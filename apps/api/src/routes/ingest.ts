@@ -7,10 +7,15 @@ import { authenticate } from "../auth/authenticate.js";
 import { dedupeKey, normaliseObservation, type NormalisedObservation } from "../domain/observations.js";
 
 function credentialRateLimitKey(request: FastifyRequest): string {
-  const credential = request.headers.authorization ?? request.headers["x-api-key"];
-  const material =
-    typeof credential === "string" && credential.length > 0 ? credential : request.ip;
-  return createHash("sha256").update(material).digest("hex");
+  const authorization = request.headers.authorization;
+  const apiKey = request.headers["x-api-key"];
+  const credential =
+    typeof authorization === "string" && authorization.startsWith("Bearer ")
+      ? authorization
+      : typeof apiKey === "string" && apiKey.startsWith("wdk_")
+        ? apiKey
+        : request.ip;
+  return createHash("sha256").update(credential).digest("hex");
 }
 
 export async function ingestRoutes(app: FastifyInstance): Promise<void> {
@@ -75,6 +80,7 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const client = await pool.connect();
+      client.on("error", (error) => request.log.error(error, "ingest database client error"));
       try {
         await client.query("BEGIN");
 
