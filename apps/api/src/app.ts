@@ -5,6 +5,7 @@ import { healthRoutes } from "./routes/health.js";
 import { authRoutes } from "./routes/auth.js";
 import { ingestRoutes } from "./routes/ingest.js";
 import { meRoutes } from "./routes/me.js";
+import { publicRoutes } from "./routes/public.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -19,6 +20,7 @@ export function buildServer(): FastifyInstance {
   app.register(authRoutes);
   app.register(ingestRoutes);
   app.register(meRoutes);
+  app.register(publicRoutes);
 
   return app;
 }

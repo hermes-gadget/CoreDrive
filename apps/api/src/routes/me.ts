@@ -127,4 +127,42 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
     }
     return reply.code(204).send();
   });
+
+  app.delete("/api/v1/me/data", { preHandler: authenticate }, async (request, reply) => {
+    const auth = request.auth!;
+    if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const observations = await client.query(
+        "DELETE FROM observations WHERE user_id = $1",
+        [auth.userId],
+      );
+      const sessions = await client.query("DELETE FROM sessions WHERE user_id = $1", [auth.userId]);
+      await client.query(
+        `INSERT INTO audit_log (username, action, detail, ip)
+         VALUES ($1, 'delete_own_data', $2, $3)`,
+        [
+          auth.username,
+          { observations: observations.rowCount, sessions: sessions.rowCount },
+          request.ip,
+        ],
+      );
+      await client.query("COMMIT");
+
+      return {
+        deleted: {
+          observations: observations.rowCount ?? 0,
+          sessions: sessions.rowCount ?? 0,
+        },
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      request.log.error(error);
+      return reply.code(500).send({ error: { code: "internal" } });
+    } finally {
+      client.release();
+    }
+  });
 }

@@ -18,6 +18,7 @@ docker compose "${compose_args[@]}" --env-file .env up -d db
 sleep 5
 docker compose "${compose_args[@]}" --env-file .env run --rm api node apps/api/dist/db/migrate.js
 docker compose "${compose_args[@]}" --env-file .env up -d --remove-orphans
+docker compose "${compose_args[@]}" --env-file .env restart web
 docker compose "${compose_args[@]}" --env-file .env ps
 
 for _ in $(seq 1 30); do
