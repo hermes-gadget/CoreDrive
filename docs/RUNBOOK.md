@@ -78,13 +78,14 @@ bash backup.sh
 Restore:
 
 ```bash
+set -euo pipefail
 docker compose stop api publisher ingest
 docker compose exec -T db dropdb -U coredrive coredrive
 docker compose exec -T db createdb -U coredrive coredrive
-docker compose exec -T db psql -U coredrive -d coredrive -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
-docker compose exec -T db psql -U coredrive -d coredrive -c "SELECT timescaledb_pre_restore();"
-docker compose exec -T db pg_restore -U coredrive -d coredrive --no-owner < backup.dump
-docker compose exec -T db psql -U coredrive -d coredrive -c "SELECT timescaledb_post_restore();"
+docker compose exec -T db psql -v ON_ERROR_STOP=1 -U coredrive -d coredrive -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+docker compose exec -T db psql -v ON_ERROR_STOP=1 -U coredrive -d coredrive -c "SELECT timescaledb_pre_restore();"
+docker compose exec -T db pg_restore -U coredrive -d coredrive --no-owner --exit-on-error < backup.dump
+docker compose exec -T db psql -v ON_ERROR_STOP=1 -U coredrive -d coredrive -c "SELECT timescaledb_post_restore();"
 docker compose start api publisher ingest
 ```
 

@@ -31,7 +31,17 @@ client.on("error", (error) => console.error("publisher: mqtt error", error.messa
 
 function publish(topic: string, payload: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("publish timeout"));
+    }, 10000);
+
     client.publish(topic, payload, { qos: 1 }, (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       if (error) reject(error);
       else resolve();
     });
@@ -44,8 +54,8 @@ async function sweep(): Promise<void> {
   );
   const outbox = await pool.query(
     `DELETE FROM ingest_outbox
-      WHERE delivered_at IS NOT NULL
-        AND delivered_at < now() - interval '7 days'`,
+      WHERE (delivered_at IS NOT NULL AND delivered_at < now() - interval '7 days')
+         OR (delivered_at IS NULL AND created_at < now() - interval '180 days')`,
   );
   const sessions = await pool.query(
     "DELETE FROM auth_sessions WHERE expires_at < now() - interval '7 days'",
@@ -77,7 +87,9 @@ async function tick(): Promise<void> {
 
   for (const row of rows) {
     try {
-      await publish(row.topic, JSON.stringify(row.payload));
+      const payload = row.payload as { obs?: { rawFrame?: unknown } };
+      if (payload?.obs) delete payload.obs.rawFrame;
+      await publish(row.topic, JSON.stringify(payload));
       await pool.query(
         `UPDATE ingest_outbox
             SET published_at = now(), attempts = 0, last_error = NULL

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Observation } from "@coredrive/protocol";
 import { CompanionConnection } from "./lib/ble.js";
-import { decodeRssi, hexFrame, packetHash, parseFrame } from "./lib/frame.js";
+import { decodeRssi, packetHash, parseFrame } from "./lib/frame.js";
 import { isPhone, watchGps, type Fix } from "./lib/gps.js";
 import { acknowledge, count, enqueue, pending, retryLater } from "./lib/queue.js";
 import { clearSession, getToken, getUsername, login, logout, upload } from "./lib/api.js";
@@ -41,6 +41,7 @@ export function App() {
   const liveRef = useRef(false);
   const sessionRef = useRef<string | null>(null);
   const ownerRef = useRef<string | null>(null);
+  const pendingConnect = useRef<symbol | null>(null);
   const flushing = useRef(false);
 
   useEffect(() => {
@@ -183,7 +184,6 @@ export function App() {
         heardId: parsed.heardId ?? undefined,
         packetHash: hash,
         payloadLen: parsed.payloadLen,
-        rawFrame: hexFrame(raw),
       };
 
       await enqueue({
@@ -196,6 +196,11 @@ export function App() {
       });
 
       setCounters((current) => ({ ...current, frames: current.frames + 1 }));
+    }).catch((error) => {
+      setCounters((current) => ({
+        ...current,
+        lastError: error instanceof Error ? error.message : "Could not store observation",
+      }));
     });
   }, []);
 
@@ -218,6 +223,8 @@ export function App() {
   async function connectRadio() {
     setBusy(true);
     setError(null);
+    const attempt = Symbol("connect");
+    pendingConnect.current = attempt;
     try {
       const next = new CompanionConnection();
       next.onFrame(onFrame);
@@ -228,12 +235,20 @@ export function App() {
         setError("Radio disconnected");
       });
       await next.connect();
+      // Sign-out can happen while the GATT handshake is in flight. Never adopt
+      // a connection that belongs to an attempt the user has abandoned.
+      if (pendingConnect.current !== attempt || !getToken()) {
+        next.disconnect();
+        return;
+      }
+      pendingConnect.current = null;
       connection.current = next;
       setDeviceName(next.name);
       setConnected(true);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : "Could not connect");
     } finally {
+      if (pendingConnect.current === attempt) pendingConnect.current = null;
       setBusy(false);
     }
   }
@@ -261,6 +276,7 @@ export function App() {
 
   async function signOut() {
     // Best effort revocation before the token is forgotten locally.
+    pendingConnect.current = null;
     await logout();
     clearSession();
     setUsername(null);

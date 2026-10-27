@@ -13,7 +13,10 @@ const coverageQuery = z.object({
 });
 
 export async function publicRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/api/v1/coverage", async (request, reply) => {
+  app.get(
+    "/api/v1/coverage",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
+    async (request, reply) => {
     if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
 
     const parsed = coverageQuery.safeParse(request.query);
@@ -67,7 +70,10 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     return { mode, days, cells: rows };
   });
 
-  app.get("/api/v1/repeaters", async (request, reply) => {
+  app.get(
+    "/api/v1/repeaters",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
+    async (request, reply) => {
     if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
 
     const parsed = z
@@ -98,7 +104,10 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     return { repeaters: rows };
   });
 
-  app.get("/api/v1/repeaters/:id", async (request, reply) => {
+  app.get(
+    "/api/v1/repeaters/:id",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
+    async (request, reply) => {
     if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
 
     const parsed = z
@@ -146,7 +155,10 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     return { repeater: summary.rows[0], cells: cells.rows };
   });
 
-  app.get("/api/v1/stats", async (_request, reply) => {
+  app.get(
+    "/api/v1/stats",
+    { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
+    async (_request, reply) => {
     if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
 
     const { rows } = await pool.query(

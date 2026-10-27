@@ -87,6 +87,7 @@ export async function upload(
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ session, data: observations }),
+    signal: AbortSignal.timeout(20000),
   });
 
   if (!response.ok) {
