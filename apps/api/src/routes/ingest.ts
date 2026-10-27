@@ -80,16 +80,17 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const client = await pool.connect();
-      client.on("error", (error) => request.log.error(error, "ingest database client error"));
       try {
         await client.query("BEGIN");
 
-        await client.query(
+        const userUpsert = await client.query<{ data_generation: number }>(
           `INSERT INTO users (username, last_seen)
            VALUES ($1, now())
-           ON CONFLICT (username) DO UPDATE SET last_seen = now()`,
+           ON CONFLICT (username) DO UPDATE SET last_seen = now()
+           RETURNING data_generation`,
           [auth.username],
         );
+        const generation = userUpsert.rows[0]?.data_generation ?? 0;
 
         const sessionOwner = await client.query<{ user_id: string }>(
           "SELECT user_id FROM sessions WHERE id = $1",
@@ -143,6 +144,7 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
             sessionId,
             source: item.obs.obs.type === "OBS" ? "pwa" : "api",
             receivedAt: new Date().toISOString(),
+            generation,
             dedupeKey: item.key,
             obs: { ...item.obs.obs, rawFrame: undefined },
           };

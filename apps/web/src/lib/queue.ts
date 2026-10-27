@@ -13,18 +13,29 @@ export interface QueueItem {
 
 const DB_NAME = "coredrive";
 const STORE = "observations";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
 function db(): Promise<IDBPDatabase> {
   dbPromise ??= openDB(DB_NAME, DB_VERSION, {
-    upgrade(database, oldVersion, _newVersion, transaction) {
+    upgrade: async (database, oldVersion, _newVersion, transaction) => {
       if (oldVersion < 1) database.createObjectStore(STORE, { keyPath: "id" });
       if (oldVersion < 2) {
         // Rows written before the queue carried an owner cannot be attributed to
         // an account, so they can never be uploaded safely. Drop them.
-        void transaction.objectStore(STORE).clear().catch(() => undefined);
+        await transaction.objectStore(STORE).clear();
+      }
+      if (oldVersion < 3) {
+        // Strip packet payload bytes captured before the metadata-only policy.
+        const store = transaction.objectStore(STORE);
+        const rows = (await store.getAll()) as QueueItem[];
+        for (const row of rows) {
+          if (row.obs && "rawFrame" in row.obs) {
+            delete (row.obs as Observation & { rawFrame?: string }).rawFrame;
+            await store.put(row);
+          }
+        }
       }
     },
   });

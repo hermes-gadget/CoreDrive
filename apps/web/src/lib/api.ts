@@ -18,6 +18,16 @@ export interface UploadResult {
   errors: Array<{ index: number; message: string }>;
 }
 
+export class UploadError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "UploadError";
+  }
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -91,7 +101,7 @@ export async function upload(
   });
 
   if (!response.ok) {
-    throw new Error(`Upload failed (${response.status})`);
+    throw new UploadError(`Upload failed (${response.status})`, response.status);
   }
 
   return (await response.json()) as UploadResult;

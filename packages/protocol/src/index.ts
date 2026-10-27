@@ -64,6 +64,7 @@ export const envelopeSchema = z.object({
   sessionId: z.string().uuid().nullable(),
   source: z.enum(["pwa", "api", "meshmapper-app"]),
   receivedAt: z.string().datetime(),
+  generation: z.number().int().min(0).default(0),
   dedupeKey: z.string().length(64),
   obs: observationSchema,
 });

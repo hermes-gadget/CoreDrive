@@ -4,7 +4,7 @@ import { CompanionConnection } from "./lib/ble.js";
 import { decodeRssi, packetHash, parseFrame } from "./lib/frame.js";
 import { isPhone, watchGps, type Fix } from "./lib/gps.js";
 import { acknowledge, count, enqueue, pending, retryLater } from "./lib/queue.js";
-import { clearSession, getToken, getUsername, login, logout, upload } from "./lib/api.js";
+import { clearSession, getToken, getUsername, login, logout, upload, UploadError } from "./lib/api.js";
 
 type Stage = "gate" | "login" | "radio" | "live" | "summary";
 
@@ -96,16 +96,28 @@ export function App() {
         let sent = 0;
         let rejected = 0;
         for (const [sessionId, group] of groups) {
-          const result = await upload(
-            {
-              id: sessionId,
-              client: "pwa",
-              appVersion: "0.1.0",
-              device: connection.current?.name ?? "companion",
-            },
-            group.map((item) => item.obs),
-            token,
-          );
+          let result;
+          try {
+            result = await upload(
+              {
+                id: sessionId,
+                client: "pwa",
+                appVersion: "0.1.0",
+                device: connection.current?.name ?? "companion",
+              },
+              group.map((item) => item.obs),
+              token,
+            );
+          } catch (error) {
+            // A 400 means the whole group is terminally invalid. Drop it and
+            // keep draining independent sessions instead of retrying forever.
+            if (error instanceof UploadError && error.status === 400) {
+              await acknowledge(group.map((item) => item.id));
+              rejected += group.length;
+              continue;
+            }
+            throw error;
+          }
 
           // A 202 can still contain rejected rows. Keep those visible and
           // acknowledge only what the server accepted or already had.
