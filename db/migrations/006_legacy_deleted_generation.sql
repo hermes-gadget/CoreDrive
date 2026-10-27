@@ -3,4 +3,5 @@
 -- pre-upgrade envelope is invalidated.
 UPDATE users
    SET data_generation = data_generation + 1
- WHERE data_deleted_at IS NOT NULL;
+ WHERE data_deleted_at IS NOT NULL
+   AND data_generation = 0;
