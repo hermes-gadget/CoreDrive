@@ -37,14 +37,33 @@ export class CompanionConnection {
     this.disconnectHandler = handler;
   }
 
-  async connect(): Promise<void> {
-    if (!navigator.bluetooth) {
-      throw new Error("Web Bluetooth is not available in this browser");
+  async connect(options: { allDevices?: boolean } = {}): Promise<void> {
+    const bluetooth = navigator.bluetooth;
+    if (!bluetooth) {
+      throw new Error(
+        "Web Bluetooth is not available here. Open this page in Chrome on Android over HTTPS. Safari and in-app browsers do not support it.",
+      );
     }
 
-    const device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [SERVICE_UUID] }],
-    });
+    let device: BluetoothDevice;
+    try {
+      device = options.allDevices
+        ? await bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: [SERVICE_UUID],
+          })
+        : await bluetooth.requestDevice({
+            filters: [{ services: [SERVICE_UUID] }],
+          });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "NotFoundError") {
+        throw new Error(
+          "No radio selected. Turn on Bluetooth and Location, close the MeshCore app, then try again or show all Bluetooth devices.",
+        );
+      }
+      throw error;
+    }
+
     this.device = device;
     device.addEventListener("gattserverdisconnected", this.handleGattDisconnected);
 
@@ -52,7 +71,15 @@ export class CompanionConnection {
       const server = await device.gatt?.connect();
       if (!server) throw new Error("Could not connect to the radio");
 
-      const service = await server.getPrimaryService(SERVICE_UUID);
+      let service: BluetoothRemoteGATTService;
+      try {
+        service = await server.getPrimaryService(SERVICE_UUID);
+      } catch {
+        throw new Error(
+          "That device does not expose the MeshCore companion service. Check that it is running companion firmware, not repeater firmware.",
+        );
+      }
+
       const characteristics = await service.getCharacteristics();
       this.rx = characteristics.find((c) => c.uuid === RX_UUID) ?? null;
       this.tx = characteristics.find((c) => c.uuid === TX_UUID) ?? null;
