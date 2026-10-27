@@ -81,4 +81,32 @@ describe("dedupeKey", () => {
       dedupeKey("other", base, base.lat, base.lon),
     );
   });
+
+  it("is stable when heardId is omitted versus uppercase after normalisation", () => {
+    const omitted = normaliseObservation({ ...base, heardId: undefined });
+    const uppercase = normaliseObservation({ ...base, heardId: "A1B2" });
+    expect(omitted.ok).toBe(true);
+    expect(uppercase.ok).toBe(true);
+    if (!omitted.ok || !uppercase.ok) return;
+
+    const fromOmitted = dedupeKey(
+      "ben",
+      omitted.value.obs,
+      omitted.value.obs.lat,
+      omitted.value.obs.lon,
+    );
+    const fromUppercase = dedupeKey(
+      "ben",
+      uppercase.value.obs,
+      uppercase.value.obs.lat,
+      uppercase.value.obs.lon,
+    );
+
+    expect(fromOmitted).toBe(fromUppercase);
+
+    // Hashing the unnormalised input is what used to split these into two keys.
+    expect(dedupeKey("ben", { ...base, heardId: "A1B2" }, base.lat, base.lon)).not.toBe(
+      fromOmitted,
+    );
+  });
 });
