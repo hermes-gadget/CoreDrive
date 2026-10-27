@@ -1,6 +1,17 @@
+import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { SERVICE_NAME, SERVICE_VERSION } from "@coredrive/protocol";
-import { checkDb, pool } from "../db/pool.js";
+import { config } from "../config.js";
+import { checkDb } from "../db/pool.js";
+import { metricsText, registry } from "../metrics.js";
+
+function metricsTokenMatches(provided: string | undefined): boolean {
+  const expected = config.METRICS_TOKEN;
+  if (!expected || !provided) return false;
+  const left = Buffer.from(provided);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
 
 export async function healthRoutes(app: FastifyInstance): Promise<void> {
   app.get("/healthz", async (_request, reply) => {
@@ -24,52 +35,29 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
     return { status: "ok", db: "ok" };
   });
 
-  app.get("/metrics", async (_request, reply) => {
-    const lines = [
-      "# HELP coredrive_up Process is serving requests.",
-      "# TYPE coredrive_up gauge",
-      "coredrive_up 1",
-      "# HELP coredrive_uptime_seconds Process uptime.",
-      "# TYPE coredrive_uptime_seconds gauge",
-      `coredrive_uptime_seconds ${Math.round(process.uptime())}`,
-    ];
-
-    if (pool) {
-      try {
-        const { rows } = await pool.query<{
-          observations: number;
-          users: number;
-          repeaters: number;
-          pending: number;
-        }>(
-          `SELECT
-             (SELECT count(*)::int FROM observations) AS observations,
-             (SELECT count(*)::int FROM users) AS users,
-             (SELECT count(DISTINCT heard_id)::int FROM observations WHERE heard_id IS NOT NULL) AS repeaters,
-             (SELECT count(*)::int FROM ingest_outbox WHERE delivered_at IS NULL) AS pending`,
-        );
-        const row = rows[0]!;
-        lines.push(
-          "# HELP coredrive_observations_total Stored observations.",
-          "# TYPE coredrive_observations_total gauge",
-          `coredrive_observations_total ${row.observations}`,
-          "# HELP coredrive_users_total Known users.",
-          "# TYPE coredrive_users_total gauge",
-          `coredrive_users_total ${row.users}`,
-          "# HELP coredrive_repeaters_total Distinct heard repeater ids.",
-          "# TYPE coredrive_repeaters_total gauge",
-          `coredrive_repeaters_total ${row.repeaters}`,
-          "# HELP coredrive_outbox_pending Undelivered outbox rows.",
-          "# TYPE coredrive_outbox_pending gauge",
-          `coredrive_outbox_pending ${row.pending}`,
-        );
-      } catch {
-        lines.push("coredrive_db_available 0");
+  app.get(
+    "/metrics",
+    { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      // No token configured means the endpoint is not exposed at all.
+      if (!config.METRICS_TOKEN) {
+        return reply.code(404).send({ error: { code: "not_found", message: "Not found" } });
       }
-    } else {
-      lines.push("coredrive_db_available 0");
-    }
 
-    return reply.type("text/plain; version=0.0.4").send(`${lines.join("\n")}\n`);
-  });
+      const authorization = request.headers.authorization;
+      const headerToken = request.headers["x-metrics-token"];
+      const provided =
+        typeof authorization === "string" && authorization.startsWith("Bearer ")
+          ? authorization.slice(7)
+          : typeof headerToken === "string"
+            ? headerToken
+            : undefined;
+
+      if (!metricsTokenMatches(provided)) {
+        return reply.code(401).send({ error: { code: "unauthorized", message: "Unauthorized" } });
+      }
+
+      return reply.type(registry.contentType).send(await metricsText());
+    },
+  );
 }

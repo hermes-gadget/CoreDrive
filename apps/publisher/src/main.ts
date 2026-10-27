@@ -32,6 +32,33 @@ const client = mqtt.connect(env.MQTT_URL, {
 client.on("connect", () => console.log("publisher: mqtt connected"));
 client.on("error", (error) => console.error("publisher: mqtt error", error.message));
 
+let publishedDelta = 0;
+let heartbeatBusy = false;
+
+async function flushHeartbeat(): Promise<void> {
+  if (heartbeatBusy) return;
+  heartbeatBusy = true;
+  try {
+    await pool.query(
+      `INSERT INTO service_status (service, updated_at, mqtt_connected, published_total)
+       VALUES ('publisher', now(), $1, $2)
+       ON CONFLICT (service) DO UPDATE
+         SET updated_at = now(),
+             mqtt_connected = EXCLUDED.mqtt_connected,
+             published_total = service_status.published_total + EXCLUDED.published_total`,
+      [client.connected, publishedDelta],
+    );
+    publishedDelta = 0;
+  } catch (error) {
+    console.error("publisher: heartbeat failed", error instanceof Error ? error.message : error);
+  } finally {
+    heartbeatBusy = false;
+  }
+}
+
+const heartbeat = setInterval(() => void flushHeartbeat(), 5000);
+heartbeat.unref();
+
 function publish(topic: string, payload: string): Promise<void> {
   if (!client.connected) return Promise.reject(new Error("mqtt disconnected"));
   return new Promise((resolve, reject) => {
@@ -94,6 +121,7 @@ async function tick(): Promise<void> {
       const payload = row.payload as { obs?: { rawFrame?: unknown } };
       if (payload?.obs) delete payload.obs.rawFrame;
       await publish(row.topic, JSON.stringify(payload));
+      publishedDelta += 1;
       await pool.query(
         `UPDATE ingest_outbox
             SET published_at = now(), attempts = 0, last_error = NULL
@@ -142,6 +170,7 @@ process.on("SIGTERM", () => void shutdown());
 process.on("SIGINT", () => void shutdown());
 
 async function main(): Promise<void> {
+  await flushHeartbeat();
   try {
     await sweep();
   } catch (error) {

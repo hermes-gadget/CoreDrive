@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { config } from "../config.js";
+import { loginTotal } from "../metrics.js";
 import { pool } from "../db/pool.js";
 import { verifyMqttCredentials } from "../auth/mqttVerify.js";
 import { signToken } from "../auth/tokens.js";
@@ -19,6 +20,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const parsed = loginSchema.safeParse(request.body);
       if (!parsed.success) {
+        loginTotal.inc({ result: "invalid" });
         return reply.code(400).send({
           error: { code: "invalid_payload", message: "username and password are required" },
         });
@@ -33,6 +35,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       const { username, password } = parsed.data;
       const valid = await verifyMqttCredentials(username, password);
       if (!valid) {
+        loginTotal.inc({ result: "failure" });
         return reply.code(401).send({
           error: { code: "invalid_credentials", message: "Invalid username or password" },
         });
@@ -48,6 +51,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
       const user = rows[0]!;
       if (user.status !== "active") {
+        loginTotal.inc({ result: "suspended" });
         return reply
           .code(403)
           .send({ error: { code: "suspended", message: "Account is suspended" } });
@@ -62,6 +66,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       );
 
       const token = await signToken({ sub: user.id, username: user.username, sid });
+      loginTotal.inc({ result: "success" });
       return reply.send({
         token,
         expiresAt: expiresAt.toISOString(),

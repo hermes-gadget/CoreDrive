@@ -14,6 +14,7 @@ const Env = z.object({
   MQTT_USERNAME: z.string().optional(),
   MQTT_PASSWORD: z.string().optional(),
   MQTT_TOPIC_PREFIX: z.string().default("wardrive"),
+  METRICS_TOKEN: z.string().min(16).optional(),
 });
 
 export type Config = z.infer<typeof Env>;
