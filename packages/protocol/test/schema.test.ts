@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ingestRequestSchema, observationSchema } from "../src/index.js";
+import { ingestRequestSchema, observationSchema, gridId, gridCenter } from "../src/index.js";
 
 const base = {
   type: "OBS" as const,
@@ -35,5 +35,15 @@ describe("observation schema", () => {
   it("caps a batch at 200", () => {
     const data = Array.from({ length: 201 }, () => base);
     expect(() => ingestRequestSchema.parse({ data })).toThrow();
+  });
+});
+
+describe("grid", () => {
+  it("round-trips a cell centre", () => {
+    const id = gridId(54.5741, -1.3182);
+    const centre = gridCenter(id);
+    expect(gridId(centre.lat, centre.lon)).toBe(id);
+    expect(Math.abs(centre.lat - 54.5741)).toBeLessThan(0.003);
+    expect(Math.abs(centre.lon + 1.3182)).toBeLessThan(0.005);
   });
 });

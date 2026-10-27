@@ -48,6 +48,14 @@ export function gridId(lat: number, lon: number): string {
   return `${Math.floor(lat / LAT_STEP)}:${Math.floor(lon / LON_STEP)}`;
 }
 
+export function gridCenter(grid: string): { lat: number; lon: number } {
+  const [latIndex, lonIndex] = grid.split(":").map(Number);
+  return {
+    lat: (latIndex + 0.5) * LAT_STEP,
+    lon: (lonIndex + 0.5) * LON_STEP,
+  };
+}
+
 export const envelopeSchema = z.object({
   v: z.literal(1),
   kind: z.literal("observation"),
