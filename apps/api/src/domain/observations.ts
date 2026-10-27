@@ -29,6 +29,7 @@ export function normaliseObservation(obs: Observation): NormaliseResult {
   const now = Math.floor(Date.now() / 1000);
   if (obs.time > now + 600) return { ok: false, error: "timestamp is in the future" };
   if (obs.time < now - 60 * 60 * 24 * 30) return { ok: false, error: "timestamp older than 30 days" };
+  if (obs.payloadLen === 0) return { ok: false, error: "missing payload" };
 
   if (obs.hops === 0) {
     if (obs.path.length !== 0) return { ok: false, error: "zero-hop observation has a path" };

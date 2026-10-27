@@ -91,6 +91,11 @@ describe("normaliseObservation", () => {
     if (result.ok) expect(result.value.lowResolution).toBe(true);
   });
 
+  it("rejects a zero-length payload", () => {
+    const result = normaliseObservation({ ...base, payloadLen: 0 });
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects future and stale timestamps", () => {
     expect(normaliseObservation({ ...base, time: now + 3600 }).ok).toBe(false);
     expect(normaliseObservation({ ...base, time: now - 60 * 60 * 24 * 31 }).ok).toBe(false);
