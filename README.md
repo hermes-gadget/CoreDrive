@@ -40,7 +40,19 @@ deploy/         compose, nginx, deploy script
 
 ## Development
 
-Setup lands with the first code pull request. Until then this repository holds the project scaffold only.
+```bash
+npm install
+cp .env.example deploy/.env        # set a real POSTGRES_PASSWORD
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d db
+npm run build
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env run --rm api node apps/api/dist/db/migrate.js
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+curl -sS http://127.0.0.1:3011/api/v1/healthz
+```
+
+Checks: `npm run typecheck`, `npm test`, `npm run build`.
+
+The API runs on port 3000 inside the compose network; nginx serves the static shell and proxies `/api/` and `/readyz`.
 
 ## Privacy
 

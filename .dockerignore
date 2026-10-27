@@ -1,0 +1,9 @@
+node_modules
+**/node_modules
+.git
+.gitignore
+dist
+**/dist
+coverage
+deploy/.env
+*.log

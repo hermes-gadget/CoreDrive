@@ -1,0 +1,19 @@
+{
+  "name": "coredrive",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @coredrive/protocol && npm run build -w @coredrive/api",
+    "typecheck": "npm run build -w @coredrive/protocol && npm run typecheck --workspaces --if-present",
+    "test": "npm run build -w @coredrive/protocol && npm run test --workspaces --if-present",
+    "dev:api": "npm run dev -w @coredrive/api",
+    "migrate": "npm run migrate -w @coredrive/api"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
