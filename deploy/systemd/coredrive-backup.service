@@ -1,0 +1,13 @@
+[Unit]
+Description=CoreDrive nightly database dump
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=ben
+WorkingDirectory=/home/ben/coredrive/repo/deploy
+ExecStart=/bin/bash /home/ben/coredrive/repo/deploy/backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

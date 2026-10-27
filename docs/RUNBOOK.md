@@ -83,10 +83,25 @@ Symptoms: the public hostname fails while localhost works.
 
 ## Backup and restore
 
+Nightly dump:
+
 ```bash
 cd /home/ben/coredrive/repo/deploy
 bash backup.sh
 ```
+
+Install the user timer once:
+
+```bash
+cd /home/ben/coredrive/repo
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/coredrive-backup.service ~/.config/systemd/user/
+cp deploy/systemd/coredrive-backup.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now coredrive-backup.timer
+```
+
+The timer runs at 03:15 UTC with up to 20 minutes of jitter. Dumps land in `~/backups/coredrive` (override with `BACKUP_DIR`), are checksummed, and expire after 30 days.
 
 Restore:
 

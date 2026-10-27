@@ -13,19 +13,31 @@ set -a
 source .env
 set +a
 
-backup_dir="${HOME}/backups/coredrive"
+backup_dir="${BACKUP_DIR:-${HOME}/backups/coredrive}"
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 file="${backup_dir}/coredrive-${stamp}.dump"
+tmp="${file}.partial"
+trap 'rm -f "$tmp"' EXIT
 
-docker compose exec -T db pg_dump \
+compose_args=(-f docker-compose.yml)
+if [[ "${DEPLOY_MODE:-staging}" == "staging" && -f docker-compose.staging.yml ]]; then
+  compose_args+=(-f docker-compose.staging.yml)
+fi
+
+docker compose "${compose_args[@]}" --env-file .env exec -T db pg_dump \
   -U "${POSTGRES_USER:-coredrive}" \
   -d "${POSTGRES_DB:-coredrive}" \
-  -Fc > "$file"
+  -Fc > "$tmp"
 
+test -s "$tmp"
+mv "$tmp" "$file"
 chmod 600 "$file"
-find "$backup_dir" -type f -name 'coredrive-*.dump' -mtime +30 -delete
+sha256sum "$file" > "${file}.sha256"
+chmod 600 "${file}.sha256"
+
+find "$backup_dir" -type f \( -name 'coredrive-*.dump' -o -name 'coredrive-*.dump.sha256' \) -mtime +30 -delete
 
 echo "wrote ${file}"
