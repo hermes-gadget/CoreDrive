@@ -9,7 +9,7 @@
 | publisher | `coredrive-publisher-1` | outbox to MQTT |
 | ingest | `coredrive-ingest-1` | MQTT to Postgres |
 | db | `coredrive-db-1` | Timescale, volume `coredrive_coredrive-db` |
-| mqtt | `coredrive-mqtt-1` | staging only; the UKMesh broker is the production target |
+| mqtt | `coredrive-mqtt-1` | staging fallback; production feed uses `mqtt.ukmesh.com` |
 
 Stack root: `/home/ben/coredrive/repo/deploy`.
 
@@ -133,5 +133,5 @@ Suspended users fail login and API-key auth. Their existing data remains until d
 
 ## Known gaps
 
-- The UKMesh broker grant for `wardrive-svc` is not provisioned; staging uses its own Mosquitto.
 - No service worker; the app shell is not cached offline, but the observation queue is.
+- Hardware acceptance on Android Chrome and iOS Bluefy is not complete.
