@@ -52,6 +52,34 @@ describe("normaliseObservation", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects a direct observation that supplies a heard id", () => {
+    const result = normaliseObservation({ ...base, routeType: 2, heardId: "a1b2" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a trace observation that supplies a heard id", () => {
+    const result = normaliseObservation({ ...base, packetType: 9, heardId: "a1b2" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("derives no heard id for direct routes", () => {
+    const result = normaliseObservation({ ...base, routeType: 2 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.heardId).toBeNull();
+      expect(result.value.obs.heardId).toBeUndefined();
+    }
+  });
+
+  it("derives no heard id for trace packets", () => {
+    const result = normaliseObservation({ ...base, packetType: 9 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.heardId).toBeNull();
+      expect(result.value.obs.heardId).toBeUndefined();
+    }
+  });
+
   it("flags one-byte hashes as low resolution", () => {
     const result = normaliseObservation({
       ...base,
