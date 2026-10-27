@@ -94,7 +94,7 @@ export function App() {
       const sessionId = sessionRef.current;
       if (!sessionId) return;
 
-      void packetHash(raw).then(async (hash) => {
+      void packetHash(raw, parsed).then(async (hash) => {
         const obs: Observation = {
           type: "OBS",
           time: Math.floor(position.time / 1000),
