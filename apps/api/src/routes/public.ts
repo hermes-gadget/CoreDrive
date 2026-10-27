@@ -31,20 +31,29 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
 
     const { rows } = await pool.query(
       `SELECT grid_id,
-              count(*)::int AS observations,
-              count(DISTINCT heard_id)::int AS repeaters,
-              max(snr)::real AS best_snr,
-              max(time) AS last_heard,
-              (split_part(grid_id, ':', 1)::float + 0.5) * 0.00225 AS lat,
-              (split_part(grid_id, ':', 2)::float + 0.5) * 0.00384 AS lon
-         FROM observations
-        WHERE time > now() - ($1 || ' days')::interval
-          AND ${modeFilter}
-          AND ($2::float IS NULL OR lat >= $2)
+              observations,
+              repeaters,
+              best_snr,
+              last_heard,
+              lat,
+              lon
+         FROM (
+           SELECT grid_id,
+                  count(*)::int AS observations,
+                  count(DISTINCT heard_id)::int AS repeaters,
+                  max(snr)::real AS best_snr,
+                  to_timestamp(floor(extract(epoch from max(time)) / 300) * 300) AS last_heard,
+                  (split_part(grid_id, ':', 1)::float + 0.5) * 0.00225 AS lat,
+                  (split_part(grid_id, ':', 2)::float + 0.5) * 0.00384 AS lon
+             FROM observations
+            WHERE time > now() - ($1 || ' days')::interval
+              AND ${modeFilter}
+            GROUP BY grid_id
+         ) cells
+        WHERE ($2::float IS NULL OR lat >= $2)
           AND ($3::float IS NULL OR lon >= $3)
           AND ($4::float IS NULL OR lat <= $4)
           AND ($5::float IS NULL OR lon <= $5)
-        GROUP BY grid_id
         ORDER BY observations DESC
         LIMIT $6`,
       [days, bounds?.[1] ?? null, bounds?.[0] ?? null, bounds?.[3] ?? null, bounds?.[2] ?? null, limit],
@@ -69,7 +78,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
       `SELECT o.heard_id AS id,
               count(*)::int AS observations,
               max(o.snr)::real AS best_snr,
-              max(o.time) AS last_heard,
+              to_timestamp(floor(extract(epoch from max(o.time)) / 300) * 300) AS last_heard,
               r.name,
               r.node_type
          FROM observations o
@@ -100,7 +109,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
               count(*)::int AS observations,
               count(DISTINCT o.grid_id)::int AS cells,
               max(o.snr)::real AS best_snr,
-              max(o.time) AS last_heard,
+              to_timestamp(floor(extract(epoch from max(o.time)) / 300) * 300) AS last_heard,
               r.name,
               r.node_type
          FROM observations o
@@ -118,7 +127,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
       `SELECT grid_id,
               count(*)::int AS observations,
               max(snr)::real AS best_snr,
-              max(time) AS last_heard,
+              to_timestamp(floor(extract(epoch from max(time)) / 300) * 300) AS last_heard,
               (split_part(grid_id, ':', 1)::float + 0.5) * 0.00225 AS lat,
               (split_part(grid_id, ':', 2)::float + 0.5) * 0.00384 AS lon
          FROM observations
@@ -142,7 +151,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
          (SELECT count(*)::int FROM observations) AS observations,
          (SELECT count(DISTINCT heard_id)::int FROM observations WHERE heard_id IS NOT NULL) AS repeaters,
          (SELECT count(*)::int FROM observations WHERE time > now() - interval '24 hours') AS last_24h,
-         (SELECT max(time) FROM observations) AS last_observation`,
+         (SELECT to_timestamp(floor(extract(epoch from max(time)) / 300) * 300) FROM observations) AS last_observation`,
     );
 
     return rows[0];

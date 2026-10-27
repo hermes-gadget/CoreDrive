@@ -88,24 +88,38 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: { code: "invalid_payload" } });
     }
 
-    const { rows } = await pool.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM api_keys WHERE user_id = $1 AND revoked_at IS NULL",
-      [auth.userId],
-    );
-    if (Number(rows[0]?.count ?? 0) >= 3) {
-      return reply
-        .code(429)
-        .send({ error: { code: "rate_limited", message: "Maximum of 3 active keys" } });
-    }
-
     const key = generateApiKey();
-    await pool.query(
-      `INSERT INTO api_keys (id, user_id, key_hash, key_prefix, label)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [randomUUID(), auth.userId, hashApiKey(key), keyPrefix(key), parsed.data.label ?? null],
-    );
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [auth.userId]);
 
-    return reply.code(201).send({ key, prefix: keyPrefix(key), label: parsed.data.label ?? null });
+      const { rows } = await client.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM api_keys WHERE user_id = $1 AND revoked_at IS NULL",
+        [auth.userId],
+      );
+      if (Number(rows[0]?.count ?? 0) >= 3) {
+        await client.query("ROLLBACK");
+        return reply
+          .code(429)
+          .send({ error: { code: "rate_limited", message: "Maximum of 3 active keys" } });
+      }
+
+      await client.query(
+        `INSERT INTO api_keys (id, user_id, key_hash, key_prefix, label)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [randomUUID(), auth.userId, hashApiKey(key), keyPrefix(key), parsed.data.label ?? null],
+      );
+      await client.query("COMMIT");
+
+      return reply.code(201).send({ key, prefix: keyPrefix(key), label: parsed.data.label ?? null });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      request.log.error(error);
+      return reply.code(500).send({ error: { code: "internal" } });
+    } finally {
+      client.release();
+    }
   });
 
   app.delete("/api/v1/me/keys/:id", { preHandler: authenticate }, async (request, reply) => {
@@ -140,12 +154,19 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
         [auth.userId],
       );
       const sessions = await client.query("DELETE FROM sessions WHERE user_id = $1", [auth.userId]);
+      const queued = await client.query("DELETE FROM ingest_outbox WHERE username = $1", [
+        auth.username,
+      ]);
       await client.query(
         `INSERT INTO audit_log (username, action, detail, ip)
          VALUES ($1, 'delete_own_data', $2, $3)`,
         [
           auth.username,
-          { observations: observations.rowCount, sessions: sessions.rowCount },
+          {
+            observations: observations.rowCount,
+            sessions: sessions.rowCount,
+            queued: queued.rowCount,
+          },
           request.ip,
         ],
       );
@@ -155,6 +176,7 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
         deleted: {
           observations: observations.rowCount ?? 0,
           sessions: sessions.rowCount ?? 0,
+          queued: queued.rowCount ?? 0,
         },
       };
     } catch (error) {
