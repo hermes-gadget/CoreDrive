@@ -27,6 +27,26 @@ export interface UploadResult {
   errors: Array<{ index: number; message: string }>;
 }
 
+export async function finalizeSession(
+  sessionId: string,
+  txAirSecsBefore: number | null,
+  txAirSecsAfter: number | null,
+  token: string,
+): Promise<void> {
+  await fetch(`/api/v1/sessions/${sessionId}/finalize`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      txAirSecsBefore: txAirSecsBefore ?? undefined,
+      txAirSecsAfter: txAirSecsAfter ?? undefined,
+    }),
+    keepalive: true,
+  });
+}
+
 export class UploadError extends Error {
   constructor(
     message: string,
