@@ -106,14 +106,19 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
         }
 
         const sessionUpsert = await client.query<{ id: string }>(
-          `INSERT INTO sessions (id, user_id, started_at, last_seen_at, client, app_version, device_model, radio_freq)
-           VALUES ($1, $2, now(), now(), $3, $4, $5, $6)
+          `INSERT INTO sessions (id, user_id, started_at, last_seen_at, client, app_version, device_model, radio_freq,
+                                 tx_air_secs_before, tx_air_secs_after, zero_tx_verified)
+           VALUES ($1, $2, now(), now(), $3, $4, $5, $6, $7, $8,
+                   ($7::bigint IS NOT NULL AND $8::bigint IS NOT NULL AND $7 = $8))
            ON CONFLICT (id) DO UPDATE
              SET last_seen_at = now(),
                  client = COALESCE(EXCLUDED.client, sessions.client),
                  app_version = COALESCE(EXCLUDED.app_version, sessions.app_version),
                  device_model = COALESCE(EXCLUDED.device_model, sessions.device_model),
-                 radio_freq = COALESCE(EXCLUDED.radio_freq, sessions.radio_freq)
+                 radio_freq = COALESCE(EXCLUDED.radio_freq, sessions.radio_freq),
+                 tx_air_secs_before = COALESCE(EXCLUDED.tx_air_secs_before, sessions.tx_air_secs_before),
+                 tx_air_secs_after = COALESCE(EXCLUDED.tx_air_secs_after, sessions.tx_air_secs_after),
+                 zero_tx_verified = COALESCE(EXCLUDED.zero_tx_verified, sessions.zero_tx_verified)
            WHERE sessions.user_id = EXCLUDED.user_id
            RETURNING id`,
           [
@@ -123,6 +128,8 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
             session?.appVersion ?? null,
             session?.device ?? null,
             session?.radioFreq ?? null,
+            session?.txAirSecsBefore ?? null,
+            session?.txAirSecsAfter ?? null,
           ],
         );
 

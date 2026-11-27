@@ -30,6 +30,8 @@ export const sessionInfoSchema = z.object({
   appVersion: z.string().max(64).optional(),
   device: z.string().max(128).optional(),
   radioFreq: z.string().max(64).optional(),
+  txAirSecsBefore: z.number().int().min(0).optional(),
+  txAirSecsAfter: z.number().int().min(0).optional(),
 });
 
 export const ingestRequestSchema = z.object({

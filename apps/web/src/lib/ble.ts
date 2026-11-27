@@ -1,24 +1,29 @@
-const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-const RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-const TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+import { RX_UUID, SERVICE_UUID, TX_UUID } from "@coredrive/companion";
+import type { Transport } from "./transport.js";
 
-const CMD_APP_START = 0x01;
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 
-export class CompanionConnection {
+export class BluetoothTransport implements Transport {
   private device: BluetoothDevice | null = null;
   private rx: BluetoothRemoteGATTCharacteristic | null = null;
   private tx: BluetoothRemoteGATTCharacteristic | null = null;
-  private frameHandler: ((frame: Uint8Array) => void) | null = null;
+  private dataHandler: ((frame: Uint8Array) => void) | null = null;
   private disconnectHandler: (() => void) | null = null;
+  private reconnectHandler: (() => void) | null = null;
+  private reconnectFailedHandler: (() => void) | null = null;
+  private reconnecting = false;
+  private stopping = false;
 
   private readonly handleGattDisconnected = (): void => {
+    if (this.stopping) return;
     this.disconnectHandler?.();
+    void this.reconnect();
   };
 
   private readonly handleFrameValue = (event: Event): void => {
     const target = event.target as BluetoothRemoteGATTCharacteristic;
     const value = target.value;
-    if (value) this.frameHandler?.(new Uint8Array(value.buffer));
+    if (value) this.dataHandler?.(new Uint8Array(value.buffer));
   };
 
   get name(): string {
@@ -29,12 +34,20 @@ export class CompanionConnection {
     return this.device?.gatt?.connected ?? false;
   }
 
-  onFrame(handler: (frame: Uint8Array) => void): void {
-    this.frameHandler = handler;
+  onData(handler: (frame: Uint8Array) => void): void {
+    this.dataHandler = handler;
   }
 
   onDisconnect(handler: () => void): void {
     this.disconnectHandler = handler;
+  }
+
+  onReconnect(handler: () => void): void {
+    this.reconnectHandler = handler;
+  }
+
+  onReconnectFailed(handler: () => void): void {
+    this.reconnectFailedHandler = handler;
   }
 
   async connect(options: { allDevices?: boolean } = {}): Promise<void> {
@@ -64,50 +77,76 @@ export class CompanionConnection {
       throw error;
     }
 
+    this.stopping = false;
     this.device = device;
     device.addEventListener("gattserverdisconnected", this.handleGattDisconnected);
 
     try {
-      const server = await device.gatt?.connect();
-      if (!server) throw new Error("Could not connect to the radio");
-
-      let service: BluetoothRemoteGATTService;
-      try {
-        service = await server.getPrimaryService(SERVICE_UUID);
-      } catch {
-        throw new Error(
-          "That device does not expose the MeshCore companion service. Check that it is running companion firmware, not repeater firmware.",
-        );
-      }
-
-      const characteristics = await service.getCharacteristics();
-      this.rx = characteristics.find((c) => c.uuid === RX_UUID) ?? null;
-      this.tx = characteristics.find((c) => c.uuid === TX_UUID) ?? null;
-
-      if (!this.rx || !this.tx) throw new Error("Companion service is missing characteristics");
-
-      await this.tx.startNotifications();
-      this.tx.addEventListener("characteristicvaluechanged", this.handleFrameValue);
-
-      await this.sendAppStart();
+      await this.attach(device);
     } catch (error) {
       // Never leave a half-open GATT link or live listeners behind: the caller
       // discards this instance and must not keep a radio still connected.
-      this.teardown();
+      this.disconnect();
       throw error;
     }
   }
 
-  private async sendAppStart(): Promise<void> {
-    const name = new TextEncoder().encode("coredrive");
-    const frame = new Uint8Array(8 + name.length);
-    frame[0] = CMD_APP_START;
-    frame[1] = 1;
-    frame.set(name, 8);
-    await this.rx?.writeValue(frame);
+  private async attach(device: BluetoothDevice): Promise<void> {
+    const server = await device.gatt?.connect();
+    if (!server) throw new Error("Could not connect to the radio");
+
+    let service: BluetoothRemoteGATTService;
+    try {
+      service = await server.getPrimaryService(SERVICE_UUID);
+    } catch {
+      throw new Error(
+        "That device does not expose the MeshCore companion service. Check that it is running companion firmware, not repeater firmware.",
+      );
+    }
+
+    const characteristics = await service.getCharacteristics();
+    const rx = characteristics.find((c) => c.uuid === RX_UUID) ?? null;
+    const tx = characteristics.find((c) => c.uuid === TX_UUID) ?? null;
+    if (!rx || !tx) throw new Error("Companion service is missing characteristics");
+
+    // Reconnects replace the characteristic objects; drop the old listener so
+    // a recovered link never delivers every frame twice.
+    if (this.tx) this.tx.removeEventListener("characteristicvaluechanged", this.handleFrameValue);
+
+    await tx.startNotifications();
+    tx.addEventListener("characteristicvaluechanged", this.handleFrameValue);
+    this.rx = rx;
+    this.tx = tx;
   }
 
-  private teardown(): void {
+  private async reconnect(): Promise<void> {
+    if (this.reconnecting || this.stopping || !this.device) return;
+    this.reconnecting = true;
+    try {
+      for (const delay of RECONNECT_DELAYS_MS) {
+        if (this.stopping) return;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        try {
+          await this.attach(this.device);
+          this.reconnectHandler?.();
+          return;
+        } catch {
+          // try the next delay
+        }
+      }
+      this.reconnectFailedHandler?.();
+    } finally {
+      this.reconnecting = false;
+    }
+  }
+
+  async write(frame: Uint8Array): Promise<void> {
+    if (!this.rx) throw new Error("Radio is not connected");
+    await this.rx.writeValue(frame.slice().buffer);
+  }
+
+  disconnect(): void {
+    this.stopping = true;
     this.device?.removeEventListener("gattserverdisconnected", this.handleGattDisconnected);
     this.tx?.removeEventListener("characteristicvaluechanged", this.handleFrameValue);
     try {
@@ -118,11 +157,9 @@ export class CompanionConnection {
     this.device = null;
     this.rx = null;
     this.tx = null;
-    this.frameHandler = null;
+    this.dataHandler = null;
     this.disconnectHandler = null;
-  }
-
-  disconnect(): void {
-    this.teardown();
+    this.reconnectHandler = null;
+    this.reconnectFailedHandler = null;
   }
 }

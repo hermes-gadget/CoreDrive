@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Observation } from "@coredrive/protocol";
-import { CompanionConnection } from "./lib/ble.js";
-import { decodeRssi, packetHash, parseFrame } from "./lib/frame.js";
+import type { PushMessage } from "@coredrive/companion";
+import { CompanionClient } from "./lib/companion.js";
+import { createTransport } from "./lib/createTransport.js";
+import { packetHash, parseFrame } from "./lib/frame.js";
 import { isPhone, watchGps, type Fix } from "./lib/gps.js";
 import { acknowledge, count, enqueue, pending, retryLater } from "./lib/queue.js";
+import type { Transport } from "./lib/transport.js";
 import {
   clearSession,
   getSession,
@@ -28,7 +31,7 @@ interface Counters {
 const EMPTY: Counters = { frames: 0, queued: 0, sent: 0, lastError: null };
 
 /** Coordinates drift while the radio keeps moving, so a stale fix must not be stamped on new packets. */
-const MAX_FIX_AGE_MS = 15_000;
+const MAX_FIX_AGE_MS = 5_000;
 const MAX_FIX_ACCURACY_M = 100;
 const UPLOAD_INTERVAL_MS = 5_000;
 
@@ -45,8 +48,12 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [zeroTx, setZeroTx] = useState<{ before: number; after: number; delta: number } | null>(null);
 
-  const connection = useRef<CompanionConnection | null>(null);
+  const transport = useRef<Transport | null>(null);
+  const client = useRef<CompanionClient | null>(null);
+  const txBeforeRef = useRef<number | null>(null);
+  const txAfterRef = useRef<number | null>(null);
   const fixRef = useRef<Fix | null>(null);
   const liveRef = useRef(false);
   const sessionRef = useRef<string | null>(null);
@@ -81,8 +88,10 @@ export function App() {
       sessionRef.current = null;
       ownerRef.current = null;
       pendingConnect.current = null;
-      connection.current?.disconnect();
-      connection.current = null;
+      client.current?.disconnect();
+      transport.current?.disconnect();
+      client.current = null;
+      transport.current = null;
       setConnected(false);
       setUsername(next);
       setStage(next ? "radio" : "login");
@@ -136,7 +145,9 @@ export function App() {
                 id: sessionId,
                 client: "pwa",
                 appVersion: "0.1.0",
-                device: connection.current?.name ?? "companion",
+                device: transport.current?.name ?? "companion",
+                txAirSecsBefore: txBeforeRef.current ?? undefined,
+                txAirSecsAfter: txAfterRef.current ?? undefined,
               },
               group.map((item) => item.obs),
               token,
@@ -157,8 +168,10 @@ export function App() {
               sessionRef.current = null;
               ownerRef.current = null;
               pendingConnect.current = null;
-              connection.current?.disconnect();
-              connection.current = null;
+              client.current?.disconnect();
+              transport.current?.disconnect();
+              client.current = null;
+              transport.current = null;
               setConnected(false);
               return;
             }
@@ -215,12 +228,10 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [username, flush]);
 
-  const onFrame = useCallback((frame: Uint8Array) => {
-    if (!liveRef.current || frame.length < 4 || frame[0] !== 0x88) return;
+  const onPush = useCallback((push: PushMessage) => {
+    if (!liveRef.current || push.kind !== "rx") return;
 
-    const snr = ((frame[1]! << 24) >> 24) / 4;
-    const rssi = decodeRssi(frame[2]!);
-    const raw = frame.slice(3);
+    const raw = push.frame.slice();
     const parsed = parseFrame(raw);
     const position = fixRef.current;
     const sessionId = sessionRef.current;
@@ -237,8 +248,8 @@ export function App() {
         lat: position.lat,
         lon: position.lon,
         accuracyM: Math.round(position.accuracy),
-        snr,
-        rssi,
+        snr: push.snr,
+        rssi: push.rssi,
         routeType: parsed.routeType,
         packetType: parsed.payloadType,
         hops: parsed.hops,
@@ -290,24 +301,45 @@ export function App() {
     pendingConnect.current = attempt;
     const initiatingToken = getToken();
     try {
-      const next = new CompanionConnection();
-      next.onFrame(onFrame);
-      next.onDisconnect(() => {
+      const nextTransport = createTransport();
+      const nextClient = new CompanionClient(nextTransport);
+      nextClient.onPush(onPush);
+      nextTransport.onDisconnect(() => {
         setConnected(false);
-        liveRef.current = false;
-        setStage("radio");
-        setError("Radio disconnected");
+        setError("Radio disconnected — reconnecting…");
       });
-      await next.connect({ allDevices: showAll });
+      nextTransport.onReconnect(async () => {
+        try {
+          const info = await nextClient.start("coredrive");
+          setDeviceName(info.name ?? nextTransport.name);
+          setConnected(true);
+          setError(null);
+        } catch (reconnectError) {
+          setError(reconnectError instanceof Error ? reconnectError.message : "Reconnect failed");
+        }
+      });
+      nextTransport.onReconnectFailed(() => {
+        setConnected(false);
+        if (liveRef.current) {
+          void stop();
+        } else {
+          setStage("radio");
+          setError("Radio disconnected");
+        }
+      });
+      await nextTransport.connect({ allDevices: showAll });
       // Sign-out can happen while the GATT handshake is in flight. Never adopt
       // a connection that belongs to an attempt the user has abandoned.
       if (pendingConnect.current !== attempt || !initiatingToken || getToken() !== initiatingToken) {
-        next.disconnect();
+        nextClient.disconnect();
+        nextTransport.disconnect();
         return;
       }
+      const info = await nextClient.start("coredrive");
       pendingConnect.current = null;
-      connection.current = next;
-      setDeviceName(next.name);
+      client.current = nextClient;
+      transport.current = nextTransport;
+      setDeviceName(info.name ?? nextTransport.name);
       setConnected(true);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : "Could not connect");
@@ -317,7 +349,24 @@ export function App() {
     }
   }
 
-  function start() {
+  async function start() {
+    const active = client.current;
+    setBusy(true);
+    setError(null);
+    try {
+      if (active) {
+        const stats = await active.radioStats();
+        txBeforeRef.current = stats.txAirSecs;
+        setZeroTx(null);
+      }
+    } catch {
+      // Older firmware may not expose radio stats. The session still runs, but
+      // the summary must say that zero-TX could not be verified.
+      txBeforeRef.current = null;
+    } finally {
+      setBusy(false);
+    }
+
     sessionRef.current = crypto.randomUUID();
     ownerRef.current = username;
     liveRef.current = true;
@@ -325,14 +374,36 @@ export function App() {
     setStage("live");
   }
 
-  function stop() {
+  async function stop() {
+    const active = client.current;
     liveRef.current = false;
+
+    // Read the radio counters before releasing the link: this is the proof
+    // that the session never transmitted.
+    if (active) {
+      try {
+        const stats = await active.radioStats();
+        txAfterRef.current = stats.txAirSecs;
+        if (txBeforeRef.current !== null) {
+          setZeroTx({
+            before: txBeforeRef.current,
+            after: stats.txAirSecs,
+            delta: stats.txAirSecs - txBeforeRef.current,
+          });
+        }
+      } catch {
+        // Leave the verification state empty; the summary reports it.
+      }
+      active.disconnect();
+    }
+
     sessionRef.current = null;
     ownerRef.current = null;
     // Release the radio first: the queue uploader owns the backlog and keeps
     // retrying, so a stalled upload must never hold the connection open.
-    connection.current?.disconnect();
-    connection.current = null;
+    transport.current?.disconnect();
+    client.current = null;
+    transport.current = null;
     setConnected(false);
     setStage("summary");
     void flush();
@@ -347,8 +418,10 @@ export function App() {
     liveRef.current = false;
     sessionRef.current = null;
     ownerRef.current = null;
-    connection.current?.disconnect();
-    connection.current = null;
+    client.current?.disconnect();
+    transport.current?.disconnect();
+    client.current = null;
+    transport.current = null;
     setConnected(false);
     setCounters(EMPTY);
     setStage("login");
@@ -426,7 +499,9 @@ export function App() {
           ) : (
             <>
               <p className="mono">{deviceName}</p>
-              <button onClick={start}>Start listening</button>
+              <button onClick={() => void start()} disabled={busy}>
+                {busy ? "Checking radio…" : "Start listening"}
+              </button>
             </>
           )}
           {fix ? (
@@ -467,7 +542,7 @@ export function App() {
           </p>
           {counters.lastError && <p className="error">{counters.lastError}</p>}
           {gpsError && <p className="error">{gpsError}</p>}
-          <button className="stop" onClick={stop}>
+          <button className="stop" onClick={() => void stop()}>
             Stop
           </button>
         </section>
@@ -480,6 +555,15 @@ export function App() {
           <p className="lede">
             {counters.sent} uploaded, {counters.queued} still queued. The queue keeps retrying.
           </p>
+          {zeroTx ? (
+            <p className={zeroTx.delta === 0 ? "meta" : "error"}>
+              {zeroTx.delta === 0
+                ? `Zero transmissions verified · tx_air_secs ${zeroTx.before} → ${zeroTx.after}`
+                : `Zero-TX check FAILED · radio transmitted ${zeroTx.delta} s of airtime`}
+            </p>
+          ) : (
+            <p className="error">Zero-TX not verified: this radio did not report tx_air_secs.</p>
+          )}
           <button onClick={() => setStage("radio")}>Back to radio</button>
         </section>
       )}

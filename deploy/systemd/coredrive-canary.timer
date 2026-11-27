@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the CoreDrive synthetic canary every 15 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+Unit=coredrive-canary.service
+
+[Install]
+WantedBy=timers.target

@@ -7,9 +7,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @coredrive/protocol && npm run build -w @coredrive/api && npm run build -w @coredrive/publisher && npm run build -w @coredrive/ingest && npm run build -w @coredrive/web",
-    "typecheck": "npm run build -w @coredrive/protocol && npm run typecheck --workspaces --if-present",
-    "test": "npm run build -w @coredrive/protocol && npm run test --workspaces --if-present",
+    "build": "npm run build -w @coredrive/protocol && npm run build -w @coredrive/companion && npm run build -w @coredrive/api && npm run build -w @coredrive/publisher && npm run build -w @coredrive/ingest && npm run build -w @coredrive/web",
+    "typecheck": "npm run build -w @coredrive/protocol && npm run build -w @coredrive/companion && npm run typecheck --workspaces --if-present",
+    "test": "npm run build -w @coredrive/protocol && npm run build -w @coredrive/companion && npm run test --workspaces --if-present",
     "dev:api": "npm run dev -w @coredrive/api",
     "migrate": "npm run migrate -w @coredrive/api"
   },

@@ -41,6 +41,19 @@ groups:
           description: Consumer is down or not acknowledging messages.
           runbook: https://github.com/hermes-gadget/CoreDrive/blob/main/docs/RUNBOOK.md#consumer-lag
 
+      - alert: CoreDriveCanaryStale
+        expr: |
+          absent(coredrive_service_last_seen_seconds{service="canary"})
+            or
+          coredrive_service_last_seen_seconds{service="canary"} > 1800
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: CoreDrive synthetic canary has not completed
+          description: The API -> MQTT -> ingest -> database round trip is broken.
+          runbook: https://github.com/hermes-gadget/CoreDrive/blob/main/docs/RUNBOOK.md#consumer-lag
+
       - alert: CoreDriveHttp5xx
         expr: |
           sum(rate(coredrive_http_requests_total{status=~"5.."}[10m]))
