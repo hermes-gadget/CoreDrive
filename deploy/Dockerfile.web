@@ -7,13 +7,15 @@ COPY apps/publisher/package.json apps/publisher/package.json
 COPY apps/ingest/package.json apps/ingest/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
+COPY packages/companion/package.json packages/companion/package.json
 RUN npm ci
 
 COPY tsconfig.base.json ./
 COPY apps/web apps/web
 COPY packages/protocol packages/protocol
+COPY packages/companion packages/companion
 
-RUN npm run build -w @coredrive/protocol && npm run build -w @coredrive/web
+RUN npm run build -w @coredrive/protocol && npm run build -w @coredrive/companion && npm run build -w @coredrive/web
 
 FROM nginx:1.27-alpine
 # Refresh the base packages (libxslt and friends) at build time; the published

@@ -57,16 +57,20 @@ grep -q '"accepted":1' "$RESULT" || {
 }
 
 # The observation must survive the MQTT round trip and be readable by its owner.
+# Capture the body first: piping curl into grep -q lets grep close the pipe
+# early, and pipefail would then report a false failure.
+FOUND=0
 for _ in $(seq 1 10); do
-  if curl -fsS --max-time 10 "$BASE/api/v1/me/observations?limit=20" \
-      -H "x-api-key: $CANARY_KEY" | grep -q "$SESSION"; then
+  OBSERVATIONS="$(curl -fsS --max-time 10 "$BASE/api/v1/me/observations?limit=20" \
+    -H "x-api-key: $CANARY_KEY" || true)"
+  if printf '%s' "$OBSERVATIONS" | grep -q "$SESSION"; then
+    FOUND=1
     break
   fi
   sleep 2
 done
 
-if ! curl -fsS --max-time 10 "$BASE/api/v1/me/observations?limit=20" \
-    -H "x-api-key: $CANARY_KEY" | grep -q "$SESSION"; then
+if [[ "$FOUND" != "1" ]]; then
   echo "canary: observation did not reach the database" >&2
   exit 1
 fi

@@ -109,7 +109,8 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
           `INSERT INTO sessions (id, user_id, started_at, last_seen_at, client, app_version, device_model, radio_freq,
                                  tx_air_secs_before, tx_air_secs_after, zero_tx_verified)
            VALUES ($1, $2, now(), now(), $3, $4, $5, $6, $7, $8,
-                   ($7::bigint IS NOT NULL AND $8::bigint IS NOT NULL AND $7 = $8))
+                   CASE WHEN $7::bigint IS NULL OR $8::bigint IS NULL THEN NULL
+                        ELSE $7::bigint = $8::bigint END)
            ON CONFLICT (id) DO UPDATE
              SET last_seen_at = now(),
                  client = COALESCE(EXCLUDED.client, sessions.client),
