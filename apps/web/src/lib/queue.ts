@@ -51,7 +51,7 @@ export async function pending(username: string, limit = 100): Promise<QueueItem[
   const now = Date.now();
   return all
     .filter((item) => item.username === username && item.nextAttemptAt <= now)
-    .sort((a, b) => a.sessionId.localeCompare(b.sessionId))
+    .sort((a, b) => a.obs.time - b.obs.time || a.attempts - b.attempts)
     .slice(0, limit);
 }
 
@@ -62,13 +62,19 @@ export async function acknowledge(ids: string[]): Promise<void> {
   await tx.done;
 }
 
-export async function retryLater(ids: string[], delayMs: number): Promise<void> {
+export async function retryLater(ids: string[], baseDelayMs: number): Promise<void> {
   const database = await db();
   const tx = database.transaction(STORE, "readwrite");
-  const next = Date.now() + delayMs;
   for (const id of ids) {
     const item = (await tx.store.get(id)) as QueueItem | undefined;
-    if (item) await tx.store.put({ ...item, attempts: item.attempts + 1, nextAttemptAt: next });
+    if (!item) continue;
+    const exponential = Math.min(baseDelayMs * 2 ** Math.min(item.attempts, 5), 5 * 60_000);
+    const jitter = exponential * (0.8 + Math.random() * 0.4);
+    await tx.store.put({
+      ...item,
+      attempts: item.attempts + 1,
+      nextAttemptAt: Date.now() + Math.round(jitter),
+    });
   }
   await tx.done;
 }

@@ -1,0 +1,13 @@
+[Unit]
+Description=CoreDrive synthetic wardrive canary
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ben
+WorkingDirectory=/home/ben/coredrive/repo/deploy
+ExecStart=/bin/bash /home/ben/coredrive/repo/deploy/canary/canary.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

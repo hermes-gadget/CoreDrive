@@ -16,6 +16,8 @@ export interface SessionInfo {
   appVersion: string;
   device: string;
   radioFreq?: string;
+  txAirSecsBefore?: number;
+  txAirSecsAfter?: number;
 }
 
 export interface UploadResult {
