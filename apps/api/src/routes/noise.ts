@@ -43,6 +43,25 @@ export async function noiseRoutes(app: FastifyInstance): Promise<void> {
       const sample = parsed.data;
 
       try {
+        // A noise sample can arrive before the first observation batch, so make
+        // sure the session row exists. Never attach a sample to someone else's
+        // session.
+        if (sample.sessionId) {
+          await pool.query(
+            `INSERT INTO sessions (id, user_id, started_at, last_seen_at)
+             VALUES ($1, $2, to_timestamp($3), now())
+             ON CONFLICT (id) DO NOTHING`,
+            [sample.sessionId, auth.userId, sample.time],
+          );
+          const owner = await pool.query<{ user_id: string }>(
+            "SELECT user_id FROM sessions WHERE id = $1",
+            [sample.sessionId],
+          );
+          if (owner.rows[0]?.user_id !== auth.userId) {
+            return reply.code(403).send({ error: { code: "forbidden" } });
+          }
+        }
+
         await pool.query(
           `INSERT INTO noise_samples (
               user_id, session_id, time, lat, lon, grid_id, accuracy_m,
