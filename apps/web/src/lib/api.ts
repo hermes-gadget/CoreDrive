@@ -1,3 +1,4 @@
+import type { ContactPush } from "@coredrive/companion";
 import type { Observation } from "@coredrive/protocol";
 
 export const SESSION_STORAGE_KEY = "coredrive.session";
@@ -45,6 +46,37 @@ export async function finalizeSession(
     }),
     keepalive: true,
   });
+}
+
+export async function syncContacts(contacts: ContactPush[], token = getToken()): Promise<void> {
+  if (!token || contacts.length === 0) return;
+
+  const response = await fetch("/api/v1/registry/contacts", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      contacts: contacts.map((contact) => ({
+        pubkey: contact.pubkey,
+        nodeType: contact.nodeType,
+        flags: contact.flags,
+        outPath: contact.outPath,
+        outPathLen: contact.outPathLen,
+        name: contact.name,
+        lastAdvert: contact.lastAdvert,
+        lat: contact.lat,
+        lon: contact.lon,
+        lastMod: contact.lastMod,
+      })),
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+
+  if (!response.ok) {
+    throw new UploadError(`Contact sync failed (${response.status})`, response.status);
+  }
 }
 
 export class UploadError extends Error {

@@ -16,6 +16,7 @@ import {
   login,
   logout,
   SESSION_STORAGE_KEY,
+  syncContacts,
   upload,
   UploadError,
 } from "./lib/api.js";
@@ -295,6 +296,17 @@ export function App() {
     }
   }
 
+  function syncRadioContacts(radio: CompanionClient): void {
+    const token = getToken();
+    if (!token) return;
+    void radio
+      .contacts()
+      .then((contacts) => syncContacts(contacts, token))
+      .catch(() => {
+        // Contacts are a bonus; the session still records raw frames.
+      });
+  }
+
   async function connectRadio(showAll = false) {
     setBusy(true);
     setError(null);
@@ -315,6 +327,7 @@ export function App() {
           setDeviceName(info.name ?? nextTransport.name);
           setConnected(true);
           setError(null);
+          syncRadioContacts(nextClient);
         } catch (reconnectError) {
           setError(reconnectError instanceof Error ? reconnectError.message : "Reconnect failed");
         }
@@ -342,6 +355,7 @@ export function App() {
       transport.current = nextTransport;
       setDeviceName(info.name ?? nextTransport.name);
       setConnected(true);
+      syncRadioContacts(nextClient);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : "Could not connect");
     } finally {

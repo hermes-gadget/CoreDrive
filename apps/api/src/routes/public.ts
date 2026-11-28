@@ -86,17 +86,10 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const { rows } = await pool.query(
-      `SELECT o.heard_id AS id,
-              count(*)::int AS observations,
-              max(o.snr)::real AS best_snr,
-              to_timestamp(floor(extract(epoch from max(o.time)) / 300) * 300) AS last_heard,
-              r.name,
-              r.node_type
-         FROM observations o
-         LEFT JOIN repeaters r ON r.id = o.heard_id
-        WHERE o.heard_id IS NOT NULL
-        GROUP BY o.heard_id, r.name, r.node_type
-        ORDER BY observations DESC
+      `SELECT id, name, node_type, lat, lon, last_heard, source
+         FROM repeaters
+        WHERE lat IS NOT NULL AND lon IS NOT NULL
+        ORDER BY last_heard DESC NULLS LAST
         LIMIT $1`,
       [parsed.data.limit],
     );
@@ -111,48 +104,48 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
 
     const parsed = z
-      .object({ id: z.string().regex(/^[0-9a-f]{2,6}$/i) })
+      .object({ id: z.string().regex(/^[0-9a-f]{2,64}$/i) })
       .safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: { code: "invalid_payload" } });
     }
 
     const id = parsed.data.id.toLowerCase();
-    const summary = await pool.query(
-      `SELECT o.heard_id AS id,
-              count(*)::int AS observations,
-              count(DISTINCT o.grid_id)::int AS cells,
-              max(o.snr)::real AS best_snr,
-              to_timestamp(floor(extract(epoch from max(o.time)) / 300) * 300) AS last_heard,
-              r.name,
-              r.node_type
-         FROM observations o
-         LEFT JOIN repeaters r ON r.id = o.heard_id
-        WHERE o.heard_id = $1
-        GROUP BY o.heard_id, r.name, r.node_type`,
+    let summary = await pool.query(
+      `SELECT id, name, node_type, lat, lon, last_heard, source
+         FROM repeaters
+        WHERE id = $1`,
       [id],
     );
+
+    // A short path hash is a prefix of the full public key. Only resolve it
+    // when exactly one registry entry matches; otherwise report the ambiguity
+    // instead of inventing a repeater.
+    if (!summary.rows[0] && id.length < 64) {
+      const candidates = await pool.query(
+        `SELECT id, name, node_type, lat, lon, last_heard, source
+           FROM repeaters
+          WHERE id LIKE $1 || '%'
+          LIMIT 2`,
+        [id],
+      );
+      if (candidates.rows.length > 1) {
+        return reply.code(409).send({
+          error: { code: "ambiguous", message: "More than one node matches that path hash" },
+          candidates: candidates.rows.map((row) => row.id),
+        });
+      }
+      summary = candidates;
+    }
 
     if (!summary.rows[0]) {
       return reply.code(404).send({ error: { code: "not_found" } });
     }
 
-    const cells = await pool.query(
-      `SELECT grid_id,
-              count(*)::int AS observations,
-              max(snr)::real AS best_snr,
-              to_timestamp(floor(extract(epoch from max(time)) / 300) * 300) AS last_heard,
-              (split_part(grid_id, ':', 1)::float + 0.5) * 0.00225 AS lat,
-              (split_part(grid_id, ':', 2)::float + 0.5) * 0.00384 AS lon
-         FROM observations
-        WHERE heard_id = $1
-        GROUP BY grid_id
-        ORDER BY observations DESC
-        LIMIT 500`,
-      [id],
-    );
-
-    return { repeater: summary.rows[0], cells: cells.rows };
+    // Path hashes are derived from the public key, not a prefix of it, so a
+    // registry entry cannot be joined to observations until the resolver
+    // stores path_hash. V1 returns the node itself; cells arrive in P2.
+    return { repeater: summary.rows[0], cells: [] };
   });
 
   app.get(

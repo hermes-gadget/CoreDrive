@@ -7,6 +7,7 @@ import { authRoutes } from "./routes/auth.js";
 import { ingestRoutes } from "./routes/ingest.js";
 import { meRoutes } from "./routes/me.js";
 import { publicRoutes } from "./routes/public.js";
+import { registryRoutes } from "./routes/registry.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -34,6 +35,7 @@ export function buildServer(): FastifyInstance {
   app.register(authRoutes);
   app.register(ingestRoutes);
   app.register(meRoutes);
+  app.register(registryRoutes);
   app.register(publicRoutes);
 
   return app;
