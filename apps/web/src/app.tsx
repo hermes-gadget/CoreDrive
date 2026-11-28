@@ -15,6 +15,7 @@ import {
   getUsername,
   login,
   logout,
+  postNoise,
   SESSION_STORAGE_KEY,
   upload,
   UploadError,
@@ -61,6 +62,7 @@ export function App() {
   const ownerRef = useRef<string | null>(null);
   const pendingConnect = useRef<symbol | null>(null);
   const flushing = useRef(false);
+  const noiseBusy = useRef(false);
 
   useEffect(() => {
     const watch = watchGps(
@@ -228,6 +230,50 @@ export function App() {
     const timer = window.setInterval(() => void flush(), UPLOAD_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [username, flush]);
+
+  // Noise is sampled every 30 s while listening. It is a receiver property, so
+  // it needs a fresh fix and must not compete with the zero-TX stats read.
+  useEffect(() => {
+    if (stage !== "live") return;
+
+    const tick = async () => {
+      const active = client.current;
+      const position = fixRef.current;
+      const sessionId = sessionRef.current;
+      const token = getToken();
+      if (!active || !position || !sessionId || !token || noiseBusy.current) return;
+      if (position.accuracy > MAX_FIX_ACCURACY_M) return;
+      if (Date.now() - position.time > MAX_FIX_AGE_MS) return;
+
+      noiseBusy.current = true;
+      try {
+        const stats = await active.radioStats();
+        await postNoise(
+          {
+            sessionId,
+            time: Math.floor(position.time / 1000),
+            lat: position.lat,
+            lon: position.lon,
+            accuracyM: Math.round(position.accuracy),
+            noiseFloorDbm: stats.noiseFloorDbm,
+            lastRssi: stats.lastRssi,
+            lastSnr: stats.lastSnr,
+            txAirSecs: stats.txAirSecs,
+            rxAirSecs: stats.rxAirSecs,
+          },
+          token,
+        );
+      } catch {
+        // A missed sample is not worth interrupting the drive.
+      } finally {
+        noiseBusy.current = false;
+      }
+    };
+
+    void tick();
+    const timer = window.setInterval(() => void tick(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [stage]);
 
   const onPush = useCallback((push: PushMessage) => {
     if (!liveRef.current || push.kind !== "rx") return;

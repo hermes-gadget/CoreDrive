@@ -47,6 +47,32 @@ export async function finalizeSession(
   });
 }
 
+export interface NoiseSample {
+  sessionId?: string;
+  time: number;
+  lat: number;
+  lon: number;
+  accuracyM?: number;
+  noiseFloorDbm?: number;
+  lastRssi?: number;
+  lastSnr?: number;
+  txAirSecs?: number;
+  rxAirSecs?: number;
+}
+
+export async function postNoise(sample: NoiseSample, token: string): Promise<void> {
+  const response = await fetch("/api/v1/noise", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(sample),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new UploadError(`Noise sample failed (${response.status})`, response.status);
+}
+
 export class UploadError extends Error {
   constructor(
     message: string,
