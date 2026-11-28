@@ -153,6 +153,7 @@ export async function upload(
   session: SessionInfo,
   observations: Observation[],
   token = getToken(),
+  keepalive = false,
 ): Promise<UploadResult> {
   if (!token) throw new Error("Not signed in");
 
@@ -163,6 +164,7 @@ export async function upload(
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ session, data: observations }),
+    keepalive,
     signal: AbortSignal.timeout(20000),
   });
 
