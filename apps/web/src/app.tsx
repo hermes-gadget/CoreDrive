@@ -26,10 +26,11 @@ interface Counters {
   frames: number;
   queued: number;
   sent: number;
+  dropped: number;
   lastError: string | null;
 }
 
-const EMPTY: Counters = { frames: 0, queued: 0, sent: 0, lastError: null };
+const EMPTY: Counters = { frames: 0, queued: 0, sent: 0, dropped: 0, lastError: null };
 
 /** Coordinates drift while the radio keeps moving, so a stale fix must not be stamped on new packets. */
 const MAX_FIX_AGE_MS = 5_000;
@@ -111,7 +112,7 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [username]);
 
-  const flush = useCallback(async () => {
+  const flush = useCallback(async (keepalive = false) => {
     if (flushing.current) return;
 
     const snapshot = getSession();
@@ -152,6 +153,7 @@ export function App() {
               },
               group.map((item) => item.obs),
               token,
+              keepalive,
             );
           } catch (error) {
             // Terminal failures drop only this session group. A revoked token
@@ -229,18 +231,28 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [username, flush]);
 
+  // Best effort final upload when the phone navigates away or the tab is
+  // backgrounded on iOS. The queue is durable, so a failed beacon loses nothing.
+  useEffect(() => {
+    const onPageHide = () => void flush(true);
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, [flush]);
+
   const onPush = useCallback((push: PushMessage) => {
     if (!liveRef.current || push.kind !== "rx") return;
 
+    const drop = () => setCounters((current) => ({ ...current, dropped: current.dropped + 1 }));
     const raw = push.frame.slice();
     const parsed = parseFrame(raw);
     const position = fixRef.current;
     const sessionId = sessionRef.current;
     const account = ownerRef.current;
-    if (!parsed || !position || !sessionId || !account) return;
-    if (getUsername() !== account) return;
-    if (position.accuracy > MAX_FIX_ACCURACY_M) return;
-    if (Date.now() - position.time > MAX_FIX_AGE_MS) return;
+    if (!parsed) return drop();
+    if (!position || !sessionId || !account) return drop();
+    if (getUsername() !== account) return drop();
+    if (position.accuracy > MAX_FIX_ACCURACY_M) return drop();
+    if (Date.now() - position.time > MAX_FIX_AGE_MS) return drop();
 
     void packetHash(raw, parsed).then(async (hash) => {
       const obs: Observation = {
@@ -301,9 +313,13 @@ export function App() {
     const attempt = Symbol("connect");
     pendingConnect.current = attempt;
     const initiatingToken = getToken();
+    let cleanupTransport: Transport | null = null;
+    let cleanupClient: CompanionClient | null = null;
     try {
       const nextTransport = createTransport();
       const nextClient = new CompanionClient(nextTransport);
+      cleanupTransport = nextTransport;
+      cleanupClient = nextClient;
       nextClient.onPush(onPush);
       nextTransport.onDisconnect(() => {
         setConnected(false);
@@ -343,6 +359,11 @@ export function App() {
       setDeviceName(info.name ?? nextTransport.name);
       setConnected(true);
     } catch (connectError) {
+      // A failed APP_START must not leave an open GATT link behind: the next
+      // attempt needs a clean transport, and a hidden connection would keep the
+      // radio bonded to a page the user cannot see.
+      cleanupClient?.disconnect();
+      cleanupTransport?.disconnect();
       setError(connectError instanceof Error ? connectError.message : "Could not connect");
     } finally {
       if (pendingConnect.current === attempt) pendingConnect.current = null;
@@ -546,6 +567,10 @@ export function App() {
               <span className="stat-label">sent</span>
             </div>
             <div>
+              <span className="stat-value">{counters.dropped}</span>
+              <span className="stat-label">dropped</span>
+            </div>
+            <div>
               <span className="stat-value">{fix ? `±${Math.round(fix.accuracy)}` : "—"}</span>
               <span className="stat-label">GPS m</span>
             </div>
@@ -568,6 +593,12 @@ export function App() {
           <p className="lede">
             {counters.sent} uploaded, {counters.queued} still queued. The queue keeps retrying.
           </p>
+          {counters.dropped > 0 && (
+            <p className="meta">
+              {counters.dropped} frames dropped because the GPS fix was missing, stale or too
+              inaccurate. Bring the phone into the open and keep the screen awake.
+            </p>
+          )}
           {zeroTx ? (
             <p className={zeroTx.delta === 0 ? "meta" : "error"}>
               {zeroTx.delta === 0
