@@ -9,6 +9,7 @@ import { acknowledge, count, enqueue, pending, retryLater } from "./lib/queue.js
 import type { Transport } from "./lib/transport.js";
 import {
   clearSession,
+  finalizeSession,
   getSession,
   getToken,
   getUsername,
@@ -376,6 +377,8 @@ export function App() {
 
   async function stop() {
     const active = client.current;
+    const endingSession = sessionRef.current;
+    const token = getToken();
     liveRef.current = false;
 
     // Read the radio counters before releasing the link: this is the proof
@@ -395,6 +398,16 @@ export function App() {
         // Leave the verification state empty; the summary reports it.
       }
       active.disconnect();
+    }
+
+    // Persist the closing counters even when the queue has already drained and
+    // there is no final observation batch to carry them.
+    if (endingSession && token) {
+      try {
+        await finalizeSession(endingSession, txBeforeRef.current, txAfterRef.current, token);
+      } catch {
+        // The session still exists; the queue and the next session carry on.
+      }
     }
 
     sessionRef.current = null;

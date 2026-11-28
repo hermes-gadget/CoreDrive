@@ -142,6 +142,47 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
+  app.post("/api/v1/sessions/:id/finalize", { preHandler: authenticate }, async (request, reply) => {
+    const auth = request.auth!;
+    if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
+
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    const body = z
+      .object({
+        txAirSecsBefore: z.number().int().min(0).optional(),
+        txAirSecsAfter: z.number().int().min(0).optional(),
+      })
+      .safeParse(request.body ?? {});
+
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ error: { code: "invalid_payload" } });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE sessions
+          SET ended_at = now(),
+              last_seen_at = now(),
+              tx_air_secs_before = COALESCE($3::bigint, tx_air_secs_before),
+              tx_air_secs_after = COALESCE($4::bigint, tx_air_secs_after),
+              zero_tx_verified = CASE
+                WHEN COALESCE($3::bigint, tx_air_secs_before) IS NOT NULL
+                 AND COALESCE($4::bigint, tx_air_secs_after) IS NOT NULL
+                THEN COALESCE($3::bigint, tx_air_secs_before) = COALESCE($4::bigint, tx_air_secs_after)
+              END
+        WHERE id = $1 AND user_id = $2
+        RETURNING id, tx_air_secs_before, tx_air_secs_after, zero_tx_verified`,
+      [
+        params.data.id,
+        auth.userId,
+        body.data.txAirSecsBefore ?? null,
+        body.data.txAirSecsAfter ?? null,
+      ],
+    );
+
+    if (!rows[0]) return reply.code(404).send({ error: { code: "not_found" } });
+    return rows[0];
+  });
+
   app.delete("/api/v1/me/data", { preHandler: authenticate }, async (request, reply) => {
     const auth = request.auth!;
     if (!pool) return reply.code(503).send({ error: { code: "unavailable" } });
