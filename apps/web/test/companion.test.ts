@@ -1,13 +1,43 @@
 import { describe, expect, it } from "vitest";
 import {
   CMD_APP_START,
+  CMD_GET_CONTACTS,
   CMD_GET_STATS,
+  RESP_CODE_CONTACT,
+  RESP_CODE_CONTACTS_START,
+  RESP_CODE_END_OF_CONTACTS,
   RESP_CODE_SELF_INFO,
   RESP_CODE_STATS,
   STATS_TYPE_RADIO,
 } from "@coredrive/companion";
 import { CompanionClient } from "../src/lib/companion.js";
 import type { Transport } from "../src/lib/transport.js";
+
+function contactFrame(): Uint8Array {
+  const frame = new Uint8Array(148);
+  const view = new DataView(frame.buffer);
+  let offset = 0;
+  frame[offset++] = RESP_CODE_CONTACT;
+  frame.fill(0xbb, offset, offset + 32);
+  offset += 32;
+  frame[offset++] = 2; // node type: repeater
+  frame[offset++] = 0; // flags
+  frame[offset++] = 2; // out path length
+  frame[offset] = 0x4e;
+  frame[offset + 1] = 0x2f;
+  offset += 64;
+  const name = new TextEncoder().encode("Gateshead-RPT");
+  frame.set(name, offset);
+  offset += 32;
+  view.setUint32(offset, 1_700_000_000, true);
+  offset += 4;
+  view.setInt32(offset, 54_574_100, true);
+  offset += 4;
+  view.setInt32(offset, -1_318_200, true);
+  offset += 4;
+  view.setUint32(offset, 1_700_000_000, true);
+  return frame;
+}
 
 class FakeTransport implements Transport {
   readonly name = "Fake radio";
@@ -32,6 +62,11 @@ class FakeTransport implements Transport {
   }
 
   private respond(frame: Uint8Array): void {
+    if (frame[0] === CMD_GET_CONTACTS) {
+      this.dataHandler?.(new Uint8Array([RESP_CODE_CONTACTS_START, 0, 0, 0, 1]));
+      this.dataHandler?.(contactFrame());
+      this.dataHandler?.(new Uint8Array([RESP_CODE_END_OF_CONTACTS]));
+    }
     if (frame[0] === CMD_APP_START) {
       this.dataHandler?.(
         new Uint8Array([
@@ -87,5 +122,21 @@ describe("CompanionClient", () => {
     const first = client.radioStats();
     await expect(client.radioStats()).rejects.toThrow(/already in flight/);
     await first;
+  });
+
+  it("reads a streamed contact list", async () => {
+    const transport = new FakeTransport();
+    const client = new CompanionClient(transport);
+    const contacts = await client.contacts();
+
+    expect(transport.written[0]![0]).toBe(CMD_GET_CONTACTS);
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0]).toMatchObject({
+      pubkey: "bb".repeat(32),
+      nodeType: 2,
+      name: "Gateshead-RPT",
+    });
+    expect(contacts[0]!.lat).toBeCloseTo(54.5741, 5);
+    expect(contacts[0]!.lon).toBeCloseTo(-1.3182, 5);
   });
 });

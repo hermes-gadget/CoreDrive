@@ -11,12 +11,23 @@ interface Cell {
   lon: number;
 }
 
+interface Repeater {
+  id: string;
+  name: string | null;
+  node_type: string | null;
+  lat: number;
+  lon: number;
+  last_heard: string | null;
+  source: string | null;
+}
+
 const LAT_HALF = 0.001125;
 const LON_HALF = 0.00192;
 
 export function MapPage() {
   const container = useRef<HTMLDivElement>(null);
   const [cells, setCells] = useState(0);
+  const [repeaters, setRepeaters] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,6 +63,31 @@ export function MapPage() {
       })
       .catch(() => setError("Could not load coverage"));
 
+    fetch("/api/v1/repeaters?limit=500")
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("repeaters"))))
+      .then((data: { repeaters: Repeater[] }) => {
+        const layer = L.layerGroup().addTo(map);
+        for (const repeater of data.repeaters) {
+          if (!Number.isFinite(repeater.lat) || !Number.isFinite(repeater.lon)) continue;
+          const label = repeater.name ?? repeater.id.slice(0, 8);
+          L.circleMarker([repeater.lat, repeater.lon], {
+            radius: 4,
+            color: "#b48cff",
+            weight: 1,
+            fillColor: "#b48cff",
+            fillOpacity: 0.75,
+          })
+            .bindPopup(
+              `${label}<br/>${repeater.node_type ?? "node"}${repeater.source ? ` · ${repeater.source}` : ""}`,
+            )
+            .addTo(layer);
+        }
+        setRepeaters(data.repeaters.length);
+      })
+      .catch(() => {
+        // The coverage layer is still useful without the registry.
+      });
+
     return () => {
       map.remove();
     };
@@ -75,9 +111,9 @@ export function MapPage() {
           <h1>What the mesh can hear.</h1>
         </div>
         <p className="meta">
-          {error ?? `${cells} cells · 30 days · 250 m grid`}
+          {error ?? `${cells} cells · ${repeaters} repeaters · 30 days · 250 m grid`}
           <br />
-          Passive observations only.
+          Passive observations only. Repeater positions come from the radio's contact list.
         </p>
       </section>
 
